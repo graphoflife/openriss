@@ -92,6 +92,9 @@ registerCategory({
     const o = { x: ctx.origin.x, y: ctx.origin.y };
     const x = lineLine(g.a, g.b, o, add(o, right)); if (!x) return;
     const vx = ctx.toView({ x: x.p.x, y: x.p.y, z: 0 }).x;
+    // außerhalb des Zuschneidebereichs nicht zeichnen
+    const cb = cropBox(ctx.view);
+    if (cb && (vx < cb.min.x - 1 || vx > cb.max.x + 1)) return;
     const ls = levels(ctx.doc);
     const y0 = (ls[0]?.elev ?? 0) - 1500, y1 = (ls[ls.length - 1]?.elev ?? 3000) + 2500;
     const b = ctx.modelBox;

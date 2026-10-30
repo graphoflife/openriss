@@ -170,6 +170,7 @@ export class App {
       let copy: El = JSON.parse(JSON.stringify(src));
       copy.id = idMap.get(id)!;
       if (copy.hostId && idMap.has(copy.hostId)) copy.hostId = idMap.get(copy.hostId);
+      if (copy.refId && idMap.has(copy.refId)) copy.refId = idMap.get(copy.refId);
       if (copy.cat === 'door' && copy.mark) copy.mark = undefined;
       const def = catDef(copy.cat);
       if (def?.onCopy) { const r = def.onCopy(copy, doc, idMap); if (r) copy = r; }

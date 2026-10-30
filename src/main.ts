@@ -14,6 +14,7 @@ import './modules/architecture';
 import './modules/structure';
 import './modules/output';
 import './modules/view3d';
+import './modules/sample';
 import { buildShell } from './ui/shell';
 import { installKeyboard } from './ui/keyboard';
 import { SelectTool } from './tools/selectTool';

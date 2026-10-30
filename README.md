@@ -39,9 +39,13 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Grundrisse, Deckenpläne, Gebäudeansichten, Schnitte, Detailausschnitte, Zeichnungsansichten,
   Legenden, 3D-Ansicht mit Schnittbereich
 - Detaillierungsgrad (grob/mittel/fein), Maßstab, Zuschneiden, Sichtbarkeit/Grafiken (VV),
-  temporär ausblenden/isolieren (HH/HI/HR), dünne Linien (TL), Unterlage
+  Grafiken in Ansicht überschreiben, temporär ausblenden/isolieren (HH/HI/HR), dünne Linien (TL), Unterlage
+- Phasen für Umbauplanung: Bestand, Neubau, Abbruch – Bauantragsdarstellung (grau/rot/gelb)
+- 3D-Ansicht mit ViewCube, Orbit (Umschalt + mittlere Maustaste), visuellen Stilen und Schnittbereich
 - Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten
-- Drucken/PDF, SVG, PNG, DXF (Export und Import), IFC-Export
+- Drucken/PDF, SVG, PNG, DXF (Export und Import), IFC4-Export, glTF/OBJ, Rasterbilder als Unterlage
+- Beispielprojekt (Einfamilienhaus mit Plänen, Schnitten, Bewehrung und Türliste) unter
+  *Einfügen → Beispielprojekt*
 
 **Bedienung wie in Revit**
 - Multifunktionsleiste mit kontextabhängigem Register „Ändern | …“, Eigenschaftenpalette mit
@@ -86,6 +90,14 @@ Weitere: `Strg+Z/Y` Rückgängig/Wiederherstellen, `Strg+C/X/V` Zwischenablage, 
 
 **Maus:** Rad = Zoom, mittlere Taste ziehen = Verschieben, Doppelklick Mausrad = Zoom Grenzen,
 Umschalt + mittlere Taste = Orbit in 3D.
+
+## Bekannte Grenzen
+
+OpenRiss deckt die häufigsten Zeichenaufgaben ab, ist aber kein vollständiger Revit-Ersatz. Nicht
+vorhanden sind u. a. Familieneditor, Gruppen, Arbeitsteilung (Worksets), Vorhangfassaden, Rampen,
+Ansichtsvorlagen und DWG/RVT-Dateien (DXF und IFC dienen dem Datenaustausch). Flächen- und
+Mattenbewehrung funktionieren in Decken und Platten (Grundriss), Bewehrungssätze passen sich nach
+Änderungen am Bauteil über „An Bauteil anpassen“ an.
 
 ## Dateien
 

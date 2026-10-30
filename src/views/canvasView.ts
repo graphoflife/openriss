@@ -111,7 +111,8 @@ export class CanvasView implements ViewportLike {
   }
   fitBox(b: BBox): void {
     const W = this.base.clientWidth || 800, H = this.base.clientHeight || 600;
-    const w = Math.max(b.max.x - b.min.x, 1000), h = Math.max(b.max.y - b.min.y, 1000);
+    const minExt = this.view.kind === 'sheet' ? 20 : 1000;
+    const w = Math.max(b.max.x - b.min.x, minExt), h = Math.max(b.max.y - b.min.y, minExt);
     this.pushZoom();
     this.zoom = Math.min(W / (w * 1.12), H / (h * 1.12));
     this.center = { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2 };

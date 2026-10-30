@@ -540,6 +540,7 @@ export function pasteAt(d: V2, view = app.activeView()!): void {
       const c: El = JSON.parse(JSON.stringify(src));
       c.id = idMap.get(src.id)!;
       if (c.hostId) c.hostId = idMap.get(c.hostId) ?? c.hostId;
+      if (c.refId && idMap.has(c.refId)) c.refId = idMap.get(c.refId);
       if (c.viewId) c.viewId = view.id;
       if (c.levelId && isPlanLike(view)) c.levelId = shiftLevel(c.levelId) as Id;
       if (c.topLevelId && isPlanLike(view)) c.topLevelId = shiftLevel(c.topLevelId) as Id;
