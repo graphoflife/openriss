@@ -1,0 +1,23 @@
+{
+  "name": "openriss",
+  "version": "0.1.0",
+  "description": "OpenRiss – freies BIM-Zeichenprogramm im Browser mit Revit-ähnlicher Bedienung",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "polygon-clipping": "0.15.7",
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.170.0",
+    "typescript": "5.9.3",
+    "vite": "5.4.21"
+  }
+}
