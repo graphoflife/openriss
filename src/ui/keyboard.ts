@@ -117,7 +117,8 @@ export function installKeyboard(): void {
         app.setPrompt(app.tool.prompt());
         return;
       case 'Delete': case 'Backspace':
-        if (app.tool === app.defaultTool) { e.preventDefault(); app.deleteSelection(); }
+        e.preventDefault();
+        if (app.tool === app.defaultTool) app.deleteSelection(); else app.tool.key(e);
         return;
       case ' ':
         e.preventDefault(); app.tool.space(); app.redrawOverlay(); return;
