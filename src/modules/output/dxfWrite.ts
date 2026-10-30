@@ -333,7 +333,7 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
       }
     }
     end();
-    sec('ENTITIES'); S.push(...E); end();
+    sec('ENTITIES'); for (const x of E) S.push(x); end();
     if (!r12) {
       sec('OBJECTS');
       g(S, 0, 'DICTIONARY'); g(S, 5, H.dict); g(S, 330, '0'); g(S, 100, 'AcDbDictionary'); g(S, 281, 1); g(S, 3, 'ACAD_GROUP'); g(S, 350, H.group);

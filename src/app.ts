@@ -4,6 +4,7 @@ import type { View } from './core/view';
 import { catDef, ViewportLike, viewportFactory, emitHook } from './core/registry';
 import type { Tool } from './tools/tool';
 import type { V2 } from './core/geom';
+import { glob } from './core/env';
 
 type Ev = 'selection' | 'tool' | 'view' | 'views' | 'status' | 'settings' | 'prompt';
 
@@ -182,5 +183,5 @@ export class App {
 }
 
 export const app = new App();
-(window as any).openriss = app;
+glob.openriss = app;
 export type { V2 };

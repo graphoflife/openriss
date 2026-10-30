@@ -17,15 +17,14 @@ import { elements3d } from './meshes';
 import { solidsOf } from '../../views/sectionEngine';
 
 // ------------------------------------------------------------ Stile & Symbole
-const style = document.createElement('style');
-style.textContent = VIEWCUBE_CSS + SECTIONBOX_CSS + `
+const V3D_CSS = VIEWCUBE_CSS + SECTIONBOX_CSS + `
 .v3d .v3d-canvas { cursor: default; outline: none; }
 .v3d-pivot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: rgba(40,170,60,.85); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none; z-index: 5; }
 .v3d-rect { position: absolute; border: 1px solid #1e6fd9; background: rgba(30,111,217,.08); pointer-events: none; z-index: 5; }
 .v3d-rect.crossing { border-style: dashed; border-color: #2a9a40; background: rgba(40,160,60,.08); }
 .v3d-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #5d6873; padding: 24px; text-align: center; }
 `;
-document.head.appendChild(style);
+if (typeof document !== 'undefined') { const style = document.createElement('style'); style.textContent = V3D_CSS; document.head.appendChild(style); }
 
 const B = '#2a6fd6';
 registerIcon('sectionbox', `<path d="M4 8 L12 4 L20 8 L20 17 L12 21 L4 17 Z" fill="#eef3f9" stroke="currentColor"/><path d="M4 8 L12 12 L20 8 M12 12 V21" stroke="currentColor" stroke-dasharray="2 1.5"/><path d="M12 7.5 V1.8 M10 3.6 L12 1.5 L14 3.6" stroke="${B}" stroke-width="1.6"/>`);

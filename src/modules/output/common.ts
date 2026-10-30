@@ -24,7 +24,7 @@ export function parseFormat(k: string): { size: string; portrait: boolean } {
 // ------------------------------------------------------------ CSS des Moduls (einmalig)
 const cssDone = new Set<string>();
 export function injectCss(id: string, css: string): void {
-  if (cssDone.has(id)) return;
+  if (cssDone.has(id) || typeof document === 'undefined') return;
   cssDone.add(id);
   const s = document.createElement('style'); s.dataset.module = 'output-' + id; s.textContent = css;
   document.head.append(s);

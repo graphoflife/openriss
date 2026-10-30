@@ -31,7 +31,7 @@ export interface ImageEl extends El {
 }
 
 // Neuzeichnen, sobald ein Bild geladen ist (Canvas-Zeichner löst das Ereignis aus)
-window.addEventListener('openriss-image', () => { for (const vp of app.viewports.values()) vp.invalidate(); });
+if (typeof window !== 'undefined') window.addEventListener('openriss-image', () => { for (const vp of app.viewports.values()) vp.invalidate(); });
 
 const corners = (e: ImageEl) => imageCorners({ p: e.origin, w: e.width, h: e.height, rot: e.rotation ?? 0 });
 /** Punkt in Bildkoordinaten (relativ zur linken unteren Ecke, ungedreht) */

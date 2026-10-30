@@ -1,5 +1,6 @@
 // Aufbau der Oberfläche: Titelleiste mit Schnellzugriff, Multifunktionsleiste, Optionsleiste,
 // Eigenschaften/Projektbrowser links, Ansichtsregister, Statusleiste.
+import { glob } from '../core/env';
 import { app } from '../app';
 import { TABS, panelsOf, cmd, Command, contextPanelsFor, catDef } from '../core/registry';
 import { icon } from './icons';
@@ -50,7 +51,7 @@ export function cmdTip(c: Command): string {
   return `<b>${c.label}${keys ? ` <span class="tk">(${keys})</span>` : ''}</b>${c.tip ?? ''}`;
 }
 
-(window as any).openrissRun = (id: string) => runCmd(id);
+glob.openrissRun = (id: string) => runCmd(id);
 export function runCmd(id: string): void {
   const c = cmd(id);
   if (!c) { console.warn('Unbekannter Befehl', id); return; }
