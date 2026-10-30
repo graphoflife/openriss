@@ -29,10 +29,24 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Flächenbewehrung und Lagermatten (Q- und R-Matten) mit Verlegeplan
 - Stahlliste / Biegeliste mit Gewichten, CSV-Export
 
+**Bewehrung nach Schweizer Usanz (SIA/SSHV)**
+- SSHV-Figurenliste mit Formerkennung (z. B. Form 205), Biegerollen d3/d1 nach SIA 262, Mindestschenkelprüfung
+- Positionsnummern je Bewehrungsplan, Eisenliste nach SSHV-Richtlinie (Deckblatt, Formskizzen, Spezialbewehrung)
+- ABS-Export (BVBS 3.1, BF2D mit Muffenblock), Verlegebereiche mit Masskette, automatische kollisionsfreie
+  Beschriftung, Lagenfilter je Ansicht, Wandabwicklungen, Treppenbewehrung
+- Einlagen (Fugenblech, Rückbiegeanschluss, Muffenstab, Durchstanzbewehrung, Ankerschiene, Futterrohr,
+  Einlegerohre), Arbeitsfugen und Etappen, Kernbohrungen, Dämmzonen mit Pressungen, Fertigteil-Lichtschacht
+
+**Gebäudetechnik (HLKSE)**
+- Heizung, Lüftung, Sanitär, Elektro: Rohre, Kanäle, Leerrohre mit Systemen und Gefälle, Apparate und
+  Symbole, Fussbodenheizungskreise, Prinzipschema, Durchbrüche automatisch an das Tragwerk
+
 **Beschriften**
 - Ausgerichtete Bemaßung (Maßketten, ganze Wände mit Öffnungen, assoziativ), lineare, Winkel- und
   Radiusbemaßung, Höhenkoten
 - Text, Beschriftung nach Kategorie, Alle beschriften, Raumstempel
+- Landesvorlage Schweiz: Masstexte «1.82⁵», Koten «OK +2.75» (Rohbau/Fertig, m ü. M.), Koten-Kästchen,
+  Schweizer Plankopf mit Revisionstabelle
 - Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Nordpfeil
 
 **Ansichten und Ausgabe**

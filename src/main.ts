@@ -1,20 +1,8 @@
 // Einstiegspunkt: Module laden, Oberfläche aufbauen, Projekt wiederherstellen oder neu anlegen.
 import './ui/styles.css';
 import { app } from './app';
-// Kernelemente
-import './elements/wall';
-import './elements/openings';
-import './elements/datums';
-import './views/canvasView';
-// Oberfläche & Befehle
-import './ui/commands';
-// Fachmodule
-import './modules/annotation';
-import './modules/architecture';
-import './modules/structure';
-import './modules/output';
-import './modules/view3d';
-import './modules/sample';
+// Kernelemente, Befehle und Fachmodule
+import './registerModules';
 import { buildShell } from './ui/shell';
 import { installKeyboard } from './ui/keyboard';
 import { SelectTool } from './tools/selectTool';

@@ -207,3 +207,9 @@ export const addRevision = (sheetId: Id, r: { text: string; by?: string; date?: 
 export { absExport, absFiles, renumberPlans, createRebarSchedule, createEisenliste, eisenlisteCsv } from './modules/structure/steel';
 export { stahllisteCsv } from './modules/structure/schedule';
 export { migrateRebarPlans, rebarPlans } from './modules/structure/rebar/norm';
+
+// ------------------------------------------------------------ Gebäudetechnik (HLKSE)
+export {
+  addRunChain, addRiser, applySlope, addFixture, addCircuit, createMepPlans, createRunSchedules, tagRuns,
+  createSchemaView, addSchemaSym, addSchemaLine, autoHeatingSchema, findPenetrations, applyPenetrations, systems,
+} from './modules/mep';
