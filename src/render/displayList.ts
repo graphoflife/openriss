@@ -38,7 +38,9 @@ export type Prim =
   | (PBase & { k: 'arc'; c: V2; r: number; a0: number; a1: number; pen: Pen })
   | (PBase & { k: 'circle'; c: V2; r: number; pen?: Pen; fill?: Fill })
   | (PBase & { k: 'text'; p: V2; s: string; font: Font })
-  | (PBase & { k: 'clip'; rings: V2[][] | null }); // Zuschneidebereich setzen/aufheben
+  | (PBase & { k: 'clip'; rings: V2[][] | null }) // Zuschneidebereich setzen/aufheben
+  /** Rasterbild: p = linke untere Ecke, w/h in Ansichts-mm, rot (rad) um p, src = Daten-URL */
+  | (PBase & { k: 'image'; p: V2; w: number; h: number; rot?: number; src: string; alpha?: number });
 
 export class DisplayList {
   items: Prim[] = [];
@@ -73,6 +75,11 @@ export class DisplayList {
   circle(c: V2, r: number, pen?: Pen, fill?: Fill, extra: Partial<PBase> = {}): void { this.push({ k: 'circle', c, r, pen, fill, ...extra }); }
   text(p: V2, s: string, font: Font, extra: Partial<PBase> = {}): void { if (s !== '') this.push({ k: 'text', p, s, font, ns: true, ...extra }); }
   clip(rings: V2[][] | null): void { this.push({ k: 'clip', rings, o: null, ns: true }); }
+  /** Rasterbild; back = ganz nach hinten (unter alle bisherigen Grundelemente) */
+  image(p: V2, w: number, h: number, src: string, rot = 0, extra: Partial<PBase> & { alpha?: number } = {}, back = false): void {
+    this.push({ k: 'image', p, w, h, src, rot, ns: true, ...extra });
+    if (back) this.items.unshift(this.items.pop()!);
+  }
 
   append(other: DisplayList, xf?: Mat2): void {
     for (const it of other.items) this.items.push(xf ? transformPrim(it, xf) : it);
@@ -182,9 +189,17 @@ function primBox(it: Prim, scale: number): BBox | null {
     case 'fill': for (const r of it.rings) for (const p of r) extendBox(b, p); break;
     case 'arc': case 'circle': extendBox(b, { x: it.c.x - it.r, y: it.c.y - it.r }); extendBox(b, { x: it.c.x + it.r, y: it.c.y + it.r }); break;
     case 'text': for (const p of textBox(it, scale)) extendBox(b, p); break;
+    case 'image': for (const p of imageCorners(it)) extendBox(b, p); break;
     case 'clip': return null;
   }
   return b;
+}
+
+/** Eckpunkte eines Bildes (Ansichts-mm, gegen Uhrzeigersinn ab linker unterer Ecke) */
+export function imageCorners(it: { p: V2; w: number; h: number; rot?: number }): V2[] {
+  const c = Math.cos(it.rot ?? 0), s = Math.sin(it.rot ?? 0);
+  const P = (x: number, y: number) => ({ x: it.p.x + x * c - y * s, y: it.p.y + x * s + y * c });
+  return [P(0, 0), P(it.w, 0), P(it.w, it.h), P(0, it.h)];
 }
 
 function onArc(ang: number, a0: number, a1: number): boolean {
@@ -222,6 +237,12 @@ function primDist(it: Prim, p: V2, scale: number): { d: number; inside?: boolean
       const dc = dist(p, it.c);
       if (it.fill && dc <= it.r) return { d: 0, inside: true, area: Math.PI * it.r * it.r };
       return { d: Math.abs(dc - it.r), area: 0 };
+    }
+    case 'image': {
+      const r = imageCorners(it);
+      if (pointInRing(p, r)) return { d: 0, inside: true, area: it.w * it.h };
+      let d = Infinity; for (let i = 0; i < 4; i++) d = Math.min(d, distToSeg(p, r[i], r[(i + 1) % 4]));
+      return { d, area: it.w * it.h };
     }
     case 'text': {
       const r = textBox(it, scale);
@@ -271,6 +292,7 @@ export function transformPrim(it: Prim, m: Mat2): Prim {
     case 'circle': return { ...it, c: P(it.c), r: it.r * s };
     case 'text': return { ...it, p: P(it.p), font: { ...it.font, rot: (it.font.rot ?? 0) + rot } };
     case 'clip': return { ...it, rings: it.rings ? it.rings.map((r) => r.map(P)) : null };
+    case 'image': return { ...it, p: P(it.p), w: it.w * s, h: it.h * s, rot: (it.rot ?? 0) + rot };
   }
 }
 

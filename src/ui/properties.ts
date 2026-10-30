@@ -8,6 +8,7 @@ import { h, attachTip } from './shell';
 import { icon } from './icons';
 import { editTypeDialog } from './dialogs';
 import { setViewProp } from './viewControlBar';
+import { phaseProps } from '../core/phases';
 
 let filterCat: string | null = null;
 const closedGroups = new Set<string>();
@@ -109,6 +110,8 @@ export function renderProps(): void {
   let props: PropDef[] = [];
   if (def?.props) { try { props = def.props(els[0], doc); } catch (e) { console.error(e); } }
   else if (!cat) props = commonProps();
+  // Phasen für Modellelemente
+  if (cat && mode !== 'view' && def && !def.annotation && !def.datum && !['view', 'type', 'material', 'project'].includes(cat) && !els.some((e) => e.viewId)) props = [...props, ...phaseProps()];
   const table = h('table', { class: 'props' });
   let group = '';
   let groupRow: HTMLTableRowElement | null = null;

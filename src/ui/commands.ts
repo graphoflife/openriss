@@ -18,6 +18,7 @@ import { h, runCmd } from './shell';
 import { icon } from './icons';
 import { duplicateView, renameView } from './browser';
 import { renderProps } from './properties';
+import { PHASE_MODES } from '../core/phases';
 
 /** Werkzeug starten (mit Prüfung der Ansichtsart) */
 export function startTool(t: Tool, id: string): void {
@@ -316,6 +317,9 @@ viewDef.props = (el: El) => {
       p.push({ key: 'cropBottom', label: 'Zuschnitt unten (Höhe)', group: g.extents, type: 'length', get: (e) => e.crop?.min.y ?? 0, set: (e, x) => ({ crop: { ...e.crop, min: { ...e.crop.min, y: x } } }) });
       p.push({ key: 'cropTop', label: 'Zuschnitt oben (Höhe)', group: g.extents, type: 'length', get: (e) => e.crop?.max.y ?? 0, set: (e, x) => ({ crop: { ...e.crop, max: { ...e.crop.max, y: x } } }) });
     }
+  }
+  if (v.kind !== 'sheet' && v.kind !== 'schedule' && v.kind !== 'drafting' && v.kind !== 'legend') {
+    p.push({ key: 'phaseMode', label: 'Phasenfilter', group: 'Phasen', type: 'select', options: PHASE_MODES as [string, string][], get: (e) => e.phaseMode ?? 'all', set: (_e, x) => ({ phaseMode: x }) });
   }
   p.push({ key: 'name', label: 'Ansichtsname', group: g.identity, type: 'text', get: (e) => e.name, set: (_e, x) => (x ? { name: x } : undefined) });
   if (v.kind === 'section' || v.kind === 'elevation') p.push({ key: 'marker', label: 'Symbolbeschriftung', group: g.identity, type: 'text', get: (e) => e.data?.marker ?? '', set: (e, x) => ({ data: { ...(e.data ?? {}), marker: x } }) });
