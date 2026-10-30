@@ -412,7 +412,7 @@ export function rebarLabel(doc: Doc, el: Rebar, fmt: TagFmt): string {
       // SSHV-Formnummer und Länge wie Eisenliste (SIA: abgewickelte Länge = Σ Aussenmasse)
       const f = chFigure(doc, el);
       const L = rebarNorm(doc) === 'SIA' ? f.legs.reduce((a, l) => a + Math.round(l), 0) : g.len;
-      return `${n} Ø${d}${n > 1 && s > 0 ? ' s=' + Math.round(s) : ''} L=${(L / 1000).toFixed(2)}${f.nr ? ' F' + f.nr : ''}`;
+      return `${n} Ø${d}${n > 1 && s > 0 ? ' s=' + Math.round(s) : ''} L=${(L / 1000).toFixed(2)}${f.nr && f.nr !== '1' ? ' F' + f.nr : ''}`; // gerade Stäbe (Form 1) ohne Formangabe wie T-205
     }
   }
 }
