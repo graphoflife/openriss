@@ -129,18 +129,22 @@ export function editWallLayers(type: WallType): void {
     body.append(h('div', { class: 'form-row' }, h('label', {}, 'Typ:'), h('b', {}, type.name)),
       h('div', { class: 'form-row' }, h('label', {}, 'Gesamtdicke:'), h('b', {}, fmtLen(layers.reduce((s, l) => s + l.t, 0)))));
     const t = h('table', { class: 'grid' });
-    t.append(h('tr', {}, h('th', {}, ''), h('th', {}, 'Funktion'), h('th', {}, 'Material'), h('th', { style: 'width:90px' }, 'Dicke'), h('th', { style: 'width:70px' }, 'Kern')));
-    t.append(h('tr', {}, h('td', { colspan: '5', style: 'text-align:center;color:#666' }, '— AUSSENSEITE —')));
+    t.append(h('tr', {}, h('th', {}, ''), h('th', {}, 'Funktion'), h('th', {}, 'Material'), h('th', { style: 'width:90px' }, 'Dicke'), h('th', { style: 'width:60px' }, 'Kern'), h('th', { style: 'width:120px', title: 'Schicht über die Deckenstirn bis OK der oberen Ebene durchziehen' }, 'Über Decke')));
+    t.append(h('tr', {}, h('td', { colspan: '6', style: 'text-align:center;color:#666' }, '— AUSSENSEITE —')));
     layers.forEach((l, i) => {
       const fn = h('select', {}) as HTMLSelectElement; for (const [k, v] of FN_LABELS) fn.append(h('option', { value: k }, v)); fn.value = l.fn; fn.onchange = () => (l.fn = fn.value as any);
       const m = h('select', {}) as HTMLSelectElement; for (const [k, v] of materialOptions(doc)) m.append(h('option', { value: k }, v)); m.value = l.mat; m.onchange = () => (l.mat = m.value);
       const th = h('input', { type: 'text', value: fmtLen(l.t) }) as HTMLInputElement; th.onchange = () => { const v = parseLen(th.value); if (v !== null && v >= 0) l.t = v; render(); };
       const core = h('input', { type: 'checkbox' }) as HTMLInputElement; core.checked = !!l.core; core.onchange = () => (l.core = core.checked);
-      const tr = h('tr', { class: i === sel ? 'sel' : '' }, h('td', {}, String(i + 1)), h('td', {}, fn), h('td', {}, m), h('td', {}, th), h('td', { style: 'text-align:center' }, core));
+      const wr = h('select', {}) as HTMLSelectElement;
+      for (const [k, v] of [['', 'Typvorgabe'], ['1', 'Ja'], ['0', 'Nein']]) wr.append(h('option', { value: k }, v));
+      wr.value = l.wrap === undefined ? '' : l.wrap ? '1' : '0';
+      wr.onchange = () => { if (wr.value === '') delete l.wrap; else l.wrap = wr.value === '1'; };
+      const tr = h('tr', { class: i === sel ? 'sel' : '' }, h('td', {}, String(i + 1)), h('td', {}, fn), h('td', {}, m), h('td', {}, th), h('td', { style: 'text-align:center' }, core), h('td', {}, wr));
       tr.onclick = (e) => { if ((e.target as HTMLElement).tagName === 'TD') { sel = i; render(); } };
       t.append(tr);
     });
-    t.append(h('tr', {}, h('td', { colspan: '5', style: 'text-align:center;color:#666' }, '— INNENSEITE —')));
+    t.append(h('tr', {}, h('td', { colspan: '6', style: 'text-align:center;color:#666' }, '— INNENSEITE —')));
     body.append(t);
     const btn = (label: string, fn: () => void) => { const b = h('button', { class: 'btn small' }, label); b.onclick = () => { fn(); render(); }; return b; };
     body.append(h('div', { style: 'display:flex;gap:6px;margin-top:8px' },

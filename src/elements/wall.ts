@@ -20,13 +20,19 @@ export const LOC_LINE_LABELS: [LocLine, string][] = [
   ['finishInt', 'Fertigteil: Innen'], ['coreExt', 'Tragende Schicht: Außen'], ['coreInt', 'Tragende Schicht: Innen'],
 ];
 
-export interface WallLayer { mat: Id; t: number; fn: 'structure' | 'finish' | 'thermal' | 'substrate' | 'membrane' | 'air'; core?: boolean }
+export interface WallLayer {
+  mat: Id; t: number; fn: 'structure' | 'finish' | 'thermal' | 'substrate' | 'membrane' | 'air'; core?: boolean;
+  /** Schicht über Deckenstirn bis OK der oberen Ebene durchziehen (undefiniert = Vorgabe des Typs für Außenschichten) */
+  wrap?: boolean;
+}
 export interface WallType extends TypeEl {
   of: 'wall';
   layers: WallLayer[];      // von außen nach innen
   function?: 'exterior' | 'interior' | 'foundation' | 'retaining';
   coarsePattern?: string;
   coarseColor?: string;
+  /** Außenschichten (außerhalb der Tragschicht) über die Deckenstirn bis OK nächste Ebene durchziehen */
+  wrapExterior?: boolean;
   description?: string;
 }
 
@@ -362,18 +368,32 @@ export function wallSolids(doc: Doc, w: Wall): Solid[] {
 
   // Pro Schicht ein Körper (Schnitte zeigen Schichten); bei 1 Schicht nur einer
   const layers = t && t.layers.length > 1 ? layerOffsets(doc, w) : null;
-  const pieces: { ring: Ring; mat?: Id }[] = [];
+  const zWrap = wrapTopZ(doc, w, z1);
+  const wraps = t ? wrappedLayers(t) : [];
+  const pieces: { ring: Ring; mat?: Id; z1: number }[] = [];
   if (layers) {
     const far = wi.L + wi.T * 20 + 10000;
-    for (const { lay, o0, o1 } of layers) {
-      if (lay.t < 0.5) continue;
+    layers.forEach(({ lay, o0, o1 }, i) => {
+      if (lay.t < 0.5) return;
       const a0 = sub(wi.c0, mul(wi.d, far)), b0 = add(wi.c1, mul(wi.d, far));
       const band: Ring = [add(a0, mul(wi.n, o0)), add(b0, mul(wi.n, o0)), add(b0, mul(wi.n, o1)), add(a0, mul(wi.n, o1))];
-      for (const p of intersection([ring], [band])) pieces.push({ ring: p[0], mat: lay.mat });
-    }
-  } else pieces.push({ ring, mat: coreMat });
+      for (const p of intersection([ring], [band])) pieces.push({ ring: p[0], mat: lay.mat, z1: wraps[i] && !profile ? zWrap : z1 });
+    });
+  } else pieces.push({ ring, mat: coreMat, z1 });
 
-  return pieces.map((pc) => ({ faces: wallPieceFaces(wi, pc.ring, ops, z0, z1, profile), mat: pc.mat }));
+  return pieces.map((pc) => ({ faces: wallPieceFaces(wi, pc.ring, ops, z0, pc.z1, profile), mat: pc.mat }));
+}
+
+/** Welche Schichten über die Deckenstirn laufen (Schicht-Option oder Typvorgabe für Außenschichten) */
+export function wrappedLayers(t: WallType): boolean[] {
+  const coreIdx = t.layers.findIndex((l) => l.core);
+  return t.layers.map((l, i) => (l.wrap !== undefined ? l.wrap : !!t.wrapExterior && !l.core && coreIdx >= 0 && i < coreIdx));
+}
+
+/** Oberkante durchgezogener Schichten: OK der oberen Ebene (negativer Versatz oben = Deckenstärke wird ignoriert) */
+export function wrapTopZ(doc: Doc, w: Wall, z1: number): number {
+  if (!w.topLevelId) return z1;
+  return Math.max(z1, levelElev(doc, w.topLevelId));
 }
 
 function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: number, z1: number, profile: { u: number; z: number }[] | null): Face[] {
@@ -635,6 +655,7 @@ export function wallTypeProps(): PropDef[] {
   return [
     { key: 'layers', label: 'Tragwerk (Schichten)', group: g.construction, type: 'button', get: () => 'Bearbeiten…', action: (t) => emitHook('editWallLayers', t) },
     { key: 'width', label: 'Breite', group: g.construction, type: 'readonly', get: (t) => fmtLen(typeThickness(t as WallType)) },
+    { key: 'wrapExterior', label: 'Außenschichten über Deckenstirn durchziehen', group: g.construction, type: 'bool', get: (t) => !!t.wrapExterior, set: (_t, v) => ({ wrapExterior: v }) },
     { key: 'function', label: 'Funktion', group: g.construction, type: 'select', options: [['exterior', 'Außen'], ['interior', 'Innen'], ['foundation', 'Fundament'], ['retaining', 'Stützmauer']], get: (t) => t.function ?? 'exterior', set: (_t, v) => ({ function: v }) },
     { key: 'coarsePattern', label: 'Füllmuster grobe Darstellung', group: g.graphics, type: 'select', options: () => [['', '<Material>'], ...patternOptions().slice(1)], get: (t) => t.coarsePattern ?? '', set: (_t, v) => ({ coarsePattern: v || undefined }) },
     { key: 'coarseColor', label: 'Füllfarbe grobe Darstellung', group: g.graphics, type: 'color', get: (t) => t.coarseColor ?? '#808080', set: (_t, v) => ({ coarseColor: v }) },
