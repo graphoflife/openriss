@@ -50,6 +50,7 @@ export function cmdTip(c: Command): string {
   return `<b>${c.label}${keys ? ` <span class="tk">(${keys})</span>` : ''}</b>${c.tip ?? ''}`;
 }
 
+(window as any).openrissRun = (id: string) => runCmd(id);
 export function runCmd(id: string): void {
   const c = cmd(id);
   if (!c) { console.warn('Unbekannter Befehl', id); return; }

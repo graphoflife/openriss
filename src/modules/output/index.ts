@@ -1,2 +1,11 @@
-// Modul: output – wird beim Start geladen und registriert Kategorien, Befehle und Werkzeuge.
+// Modul: output – Pläne, Ansichtsfenster, Bauteillisten, Drucken/PDF, Export (SVG/PNG/DXF/CSV),
+// DXF- und Bildimport, Ausschnitte (Callouts) und Grundrisse für Ebenen.
+import './icons';
+import './sheets';
+import './viewports';
+import './schedules';
+import './print';
+import './dxfCommands';
+import './images';
+import './callout';
 export {};
