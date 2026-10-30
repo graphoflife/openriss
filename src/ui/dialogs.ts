@@ -389,3 +389,73 @@ export function helpDialog(): void {
 }
 
 export { fmtNum, typeThickness };
+
+// ------------------------------------------------------------ Grafiken in Ansicht überschreiben
+export function overrideDialog(view: View, ids: Id[]): void {
+  const cur = { ...((view.elOverrides ?? {})[ids[0]] ?? {}) } as any;
+  const body = h('div', {});
+  const col = h('input', { type: 'color', value: cur.color ?? '#000000' }) as HTMLInputElement;
+  const useCol = h('input', { type: 'checkbox' }) as HTMLInputElement; useCol.checked = !!cur.color;
+  const pen = h('select', {}) as HTMLSelectElement; pen.append(h('option', { value: '' }, '<Keine Überschreibung>'));
+  for (let i = 1; i <= 16; i++) pen.append(h('option', { value: String(i) }, `${i} (${PEN_MM[i]} mm)`));
+  pen.value = cur.w ? String(cur.w) : '';
+  const dash = h('select', {}) as HTMLSelectElement;
+  for (const [k, l] of [['', '<Keine Überschreibung>'], ['solid', 'Durchgezogen'], ['dash', 'Strich'], ['hidden', 'Verdeckt'], ['center', 'Strichpunkt'], ['dot', 'Punkt']]) dash.append(h('option', { value: k }, l));
+  dash.value = cur.dash ?? '';
+  const fill = h('input', { type: 'color', value: cur.fillColor ?? '#cccccc' }) as HTMLInputElement;
+  const useFill = h('input', { type: 'checkbox' }) as HTMLInputElement; useFill.checked = !!cur.fillColor;
+  const ht = h('input', { type: 'checkbox' }) as HTMLInputElement; ht.checked = !!cur.halftone;
+  body.append(
+    h('div', { class: 'hint' }, `${ids.length} Element(e) in Ansicht „${view.name}“`),
+    h('div', { class: 'form-row' }, h('label', {}, useCol, ' Linienfarbe'), col),
+    h('div', { class: 'form-row' }, h('label', {}, 'Linienstärke'), pen),
+    h('div', { class: 'form-row' }, h('label', {}, 'Linienmuster'), dash),
+    h('div', { class: 'form-row' }, h('label', {}, useFill, ' Füllfarbe (Schnitt)'), fill),
+    h('div', { class: 'form-row' }, h('label', {}, ht, ' Halbton')),
+  );
+  const apply = (o: any | null) => {
+    const all = { ...(view.elOverrides ?? {}) } as Record<string, any>;
+    for (const id of ids) { if (o) all[id] = o; else delete all[id]; }
+    app.doc.transaction('Grafiken überschreiben', () => app.doc.update(view.id, { elOverrides: all }));
+    app.refreshViews();
+  };
+  modal('Grafiken in Ansicht nach Element', body, [
+    { label: 'Zurücksetzen', onClick: () => apply(null) },
+    { label: 'OK', primary: true, onClick: () => apply({ color: useCol.checked ? col.value : undefined, w: pen.value ? parseInt(pen.value, 10) : undefined, dash: dash.value || undefined, fillColor: useFill.checked ? fill.value : undefined, halftone: ht.checked || undefined }) },
+    { label: 'Abbrechen', onClick: () => {} },
+  ]);
+}
+
+// ------------------------------------------------------------ Nicht verwendete bereinigen
+export function purgeDialog(): void {
+  const doc = app.doc;
+  const usedTypes = new Set(doc.all().map((e) => e.typeId).filter(Boolean));
+  const usedMats = new Set<string>();
+  for (const e of doc.all()) {
+    for (const v of Object.values(e)) if (typeof v === 'string' && v.startsWith('m_')) usedMats.add(v);
+    if (Array.isArray(e.layers)) for (const l of e.layers) if (l?.mat) usedMats.add(l.mat);
+    for (const k of ['mat', 'glassMat', 'material']) if (e[k]) usedMats.add(e[k]);
+  }
+  const unusedTypes = doc.all<TypeEl>('type').filter((t) => !usedTypes.has(t.id));
+  // je Kategorie mindestens einen Typ behalten
+  const byOf = new Map<string, TypeEl[]>();
+  for (const t of unusedTypes) { const l = byOf.get(t.of) ?? []; l.push(t); byOf.set(t.of, l); }
+  const removable: El[] = [];
+  for (const [of, list] of byOf) {
+    const anyUsed = doc.all<TypeEl>('type').some((t) => t.of === of && usedTypes.has(t.id));
+    removable.push(...(anyUsed ? list : list.slice(1)));
+  }
+  const unusedMats = doc.all<Material>('material').filter((m) => !usedMats.has(m.id));
+  removable.push(...unusedMats);
+  const body = h('div', { style: 'max-height:55vh;overflow:auto;min-width:420px' });
+  const checks = new Map<string, HTMLInputElement>();
+  if (!removable.length) body.append(h('div', {}, 'Keine nicht verwendeten Elemente gefunden.'));
+  for (const e of removable) {
+    const cb = h('input', { type: 'checkbox' }) as HTMLInputElement; cb.checked = true; checks.set(e.id, cb);
+    body.append(h('div', { class: 'form-row' }, h('label', { style: 'min-width:360px' }, cb, ` ${e.cat === 'type' ? (catDef((e as TypeEl).of)?.label ?? '') + ': ' : 'Material: '}${e.name}`)));
+  }
+  modal('Nicht verwendete bereinigen', body, [
+    { label: 'OK', primary: true, onClick: () => { const ids = [...checks].filter(([, c]) => c.checked).map(([id]) => id); if (ids.length) doc.transaction('Bereinigen', () => { for (const id of ids) doc.remove(id); }); toast(`${ids.length} Element(e) entfernt.`); } },
+    { label: 'Abbrechen', onClick: () => {} },
+  ]);
+}

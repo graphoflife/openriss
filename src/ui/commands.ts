@@ -9,7 +9,7 @@ import { WallTool, StructuralWallTool, LinesTool, GridTool, RefPlaneTool, LevelT
 import { MoveTool, CopyTool, RotateTool, MirrorTool, ArrayTool, ScaleTool, AlignTool, TrimTool, TrimSingleTool, SplitTool, OffsetTool, MatchTool, MeasureTool, PasteTool, copyToClipboard, pasteAt } from '../tools/modifyTools';
 import { Tool, ToolEvent } from '../tools/tool';
 import type { DisplayList } from '../render/displayList';
-import { visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
+import { overrideDialog, purgeDialog, visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
 import { getTempVis, resetTempVis } from '../views/viewBuilder';
 import { bumpTempVis } from '../views/canvasView';
 import { tempHide, tempIsolate, showMenu, SCALES } from './viewControlBar';
@@ -206,7 +206,10 @@ registerCommand({ id: 'materials', label: 'Materialien', icon: 'material', keys:
 registerCommand({ id: 'objectStyles', label: 'Objektstile', icon: 'thinlines', run: objectStylesDialog });
 registerCommand({ id: 'keyboardShortcuts', label: 'Tastatur- befehle', icon: 'keyboard', keys: ['KS'], run: shortcutsDialog });
 registerCommand({ id: 'snapsDialog', label: 'Fang', icon: 'settings', run: snapDialog });
+registerCommand({ id: 'purge', label: 'Nicht verwendete bereinigen', icon: 'delete', run: purgeDialog });
+registerCommand({ id: 'overrideGraphics', label: 'Grafiken überschreiben', icon: 'thinlines', tip: 'Grafiken in Ansicht nach Element überschreiben (Farbe, Linienstärke, Halbton)', enabled: () => hasSel() && !!app.activeView(), run: () => overrideDialog(app.activeView()!, [...app.selection]) });
 registerPanel('Verwalten', 'Einstellungen', ['materials', 'objectStyles', 'snapsDialog', 'projectInfo', 'units', 'keyboardShortcuts'], 10);
+registerPanel('Verwalten', 'Projekt', ['purge'], 20);
 
 // Fangüberschreibungen (wie Revit)
 const snapCmd = (id: string, key: string, kind: string, label: string) => registerCommand({ id, label, keys: [key], run: () => { app.snapOverride = kind; app.status('Fang: ' + label); } });
@@ -245,7 +248,7 @@ registerPanel('Ändern', 'Ändern', [
 ], 10);
 registerPanel('Ändern', 'Messen', [{ cmd: 'measure', size: 'large' }], 20);
 registerPanel('Ändern', 'Erstellen', [{ cmd: 'createSimilar', size: 'large' }, { cmd: 'match', size: 'large' }], 30);
-registerPanel('Ändern', 'Ansicht', [{ cmd: 'tempHide', size: 'small' }, { cmd: 'tempIsolate', size: 'small' }, { cmd: 'hideEl', size: 'small' }], 40);
+registerPanel('Ändern', 'Ansicht', [{ cmd: 'tempHide', size: 'small' }, { cmd: 'tempIsolate', size: 'small' }, { cmd: 'hideEl', size: 'small' }, { cmd: 'overrideGraphics', size: 'small' }], 40);
 
 // Kontextpanels
 registerCommand({ id: 'flipWall', label: 'Ausrichtung umkehren', icon: 'flip', tip: 'Leertaste', run: () => app.tool.space() || app.defaultTool.space() });
@@ -284,6 +287,7 @@ onHook('contextmenu', (v: any, e: MouseEvent) => {
   if (app.selection.size) {
     items.push('-', ['Alle Exemplare auswählen', () => runCmd('selectInstances')]);
     items.push(['In Ansicht ausblenden: Elemente', () => runCmd('hideEl')], ['In Ansicht ausblenden: Kategorie', () => runCmd('hideCat')]);
+    items.push(['Grafiken in Ansicht überschreiben: Element…', () => runCmd('overrideGraphics')]);
     items.push(['Löschen', () => app.deleteSelection()]);
   }
   items.push('-', ['Zoom Grenzen', () => v.zoomExtents()], ['Vorheriger Zoom', () => v.zoomPrevious()], ['Verkleinern (2x)', () => v.zoomBy(0.5)]);

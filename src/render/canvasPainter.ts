@@ -25,6 +25,19 @@ export interface PaintOpts {
 
 const tileCache = new Map<string, HTMLCanvasElement>();
 
+// Rasterbilder (Daten-URL → Bild); nach dem Laden wird 'openriss-image' ausgelöst (Neuzeichnen)
+const imgCache = new Map<string, HTMLImageElement>();
+function cachedImage(src: string): HTMLImageElement | null {
+  let im = imgCache.get(src);
+  if (!im) {
+    if (imgCache.size > 60) imgCache.delete(imgCache.keys().next().value as string);
+    im = new Image();
+    im.onload = () => window.dispatchEvent(new Event('openriss-image'));
+    im.src = src; imgCache.set(src, im);
+  }
+  return im.complete && im.naturalWidth ? im : null;
+}
+
 function makeTile(name: string, color: string, res: number): HTMLCanvasElement | null {
   const def = PATTERNS[name];
   if (!def || def.solid) return null;
@@ -157,6 +170,25 @@ export function paint(ctx: CanvasRenderingContext2D, dl: DisplayList, xf: Mat2, 
         const path = () => { ctx.beginPath(); ctx.arc(c.x * dpr, c.y * dpr, Math.max(0.5, it.r * scaleXf * dpr), 0, Math.PI * 2); };
         if (it.fill) fillWith(it.fill, it.ht, path);
         if (it.pen) { strokeSetup(it.pen, it.ht); path(); ctx.stroke(); }
+        break;
+      }
+      case 'image': {
+        const im = cachedImage(it.src);
+        const c = Math.cos(it.rot ?? 0), sn = Math.sin(it.rot ?? 0);
+        const o0 = P({ x: it.p.x - it.h * sn, y: it.p.y + it.h * c }); // linke obere Ecke
+        const ux = P({ x: it.p.x + it.w * c, y: it.p.y + it.w * sn }), p0 = P(it.p);
+        const ex = { x: ux.x - p0.x, y: ux.y - p0.y }, ey = { x: p0.x - o0.x, y: p0.y - o0.y };
+        ctx.save();
+        if (!im || o.color || o.noFill) {
+          ctx.strokeStyle = o.color ?? '#808080'; ctx.lineWidth = (1 + (o.boost ?? 0)) * dpr; ctx.setLineDash([]);
+          ctx.setTransform(ex.x * dpr, ex.y * dpr, ey.x * dpr, ey.y * dpr, o0.x * dpr, o0.y * dpr);
+          ctx.beginPath(); ctx.rect(0, 0, 1, 1); ctx.restore(); ctx.save(); ctx.stroke();
+        } else {
+          ctx.globalAlpha = it.ht ? 0.45 : it.alpha ?? 1;
+          ctx.setTransform((ex.x / im.naturalWidth) * dpr, (ex.y / im.naturalWidth) * dpr, (ey.x / im.naturalHeight) * dpr, (ey.y / im.naturalHeight) * dpr, o0.x * dpr, o0.y * dpr);
+          ctx.drawImage(im, 0, 0);
+        }
+        ctx.restore();
         break;
       }
       case 'text': {

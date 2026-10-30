@@ -53,3 +53,29 @@ export function phaseProps(): PropDef[] {
     get: (e) => phaseOf(e), set: (_e, v) => ({ phase: v === 'new' ? undefined : v }),
   }];
 }
+
+// ------------------------------------------------------------ Grafiken in Ansicht überschreiben
+export interface GraphicOverride { color?: string; w?: number; halftone?: boolean; fillColor?: string; dash?: string }
+
+/** Überschreibungen nach Kategorie (VV) und Element (Grafiken überschreiben) anwenden */
+export function applyOverrides(doc: Doc, view: View, dl: DisplayList): void {
+  const byCat = (view.catOverrides ?? {}) as Record<string, GraphicOverride>;
+  const byEl = (view.elOverrides ?? {}) as Record<string, GraphicOverride>;
+  if (!Object.keys(byCat).length && !Object.keys(byEl).length) return;
+  const cache = new Map<string, GraphicOverride | null>();
+  const ov = (id: string | null | undefined): GraphicOverride | null => {
+    if (!id) return null;
+    if (cache.has(id)) return cache.get(id)!;
+    const el = doc.get(id);
+    const c = el ? byCat[el.cat] : undefined; const e = byEl[id];
+    const r = c || e ? { ...(c ?? {}), ...(e ?? {}) } : null;
+    cache.set(id, r); return r;
+  };
+  for (const it of dl.items as Prim[]) {
+    const o = ov(it.o); if (!o) continue;
+    if (o.halftone) it.ht = true;
+    if ('pen' in it && it.pen) it.pen = { ...it.pen, ...(o.color ? { color: o.color } : {}), ...(o.w ? { w: o.w } : {}), ...(o.dash ? { dash: o.dash as any } : {}) };
+    if (it.k === 'fill' && o.fillColor && it.fill.color !== 'transparent') it.fill = { color: o.fillColor, pattern: 'solid', patColor: o.fillColor };
+    if (it.k === 'text' && o.color) it.font = { ...it.font, color: o.color };
+  }
+}

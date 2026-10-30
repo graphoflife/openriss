@@ -6,7 +6,7 @@ import { View, Level, makeProjector, isPlanLike, isSectionLike, DEFAULT_RANGE, c
 import { DisplayList } from '../render/displayList';
 import { drawSolids, Projector, catPen } from './sectionEngine';
 import { boxCorners } from '../core/geom';
-import { applyPhaseGraphics, phaseVisible } from '../core/phases';
+import { applyPhaseGraphics, phaseVisible, applyOverrides } from '../core/phases';
 
 // ------------------------------------------------------------ Temporär ausblenden/isolieren (HH, HI …)
 export interface TempVis { hidden: Set<Id>; isolate: Set<Id> | null; hiddenCats: Set<string>; isolateCats: Set<string> | null; reveal?: boolean }
@@ -86,6 +86,7 @@ export function buildViewDL(doc: Doc, view: View, o: BuildOpts = {}): DisplayLis
     drawAnnos(doc, view, dl, annos);
   }
   applyPhaseGraphics(doc, view, dl);
+  applyOverrides(doc, view, dl);
   return dl;
 }
 

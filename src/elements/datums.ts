@@ -238,10 +238,11 @@ export function sectionLabel(doc: Doc, v: View): string {
   return v.data?.marker ?? v.name.replace(/^Schnitt\s*/i, '').slice(0, 4) ?? '?';
 }
 export function sheetRefOf(doc: Doc, v: View): { detail: string; sheet: string } | null {
-  for (const s of doc.all<View>('view')) {
-    if (s.kind !== 'sheet') continue;
-    const vp = (s.data?.viewports ?? []).find((x: any) => x.viewId === v.id);
-    if (vp) return { detail: String(vp.detail ?? '1'), sheet: s.sheetNo ?? '' };
+  // Ansichtsfenster (Modul output): cat 'viewport', viewId = Plan, refId = platzierte Ansicht
+  for (const vp of doc.all('viewport')) {
+    if (vp.refId !== v.id) continue;
+    const s = doc.get<View>(vp.viewId);
+    if (s) return { detail: String(vp.detail ?? '1'), sheet: s.sheetNo ?? '' };
   }
   return null;
 }

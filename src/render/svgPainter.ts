@@ -85,6 +85,14 @@ export class SvgBuilder {
           if (it.pen) this.body.push(`<circle cx="${n(c.x)}" cy="${n(c.y)}" r="${n(r)}" ${stroke(it.pen, it.ht)}/>`);
           break;
         }
+        case 'image': {
+          // Einheitsquadrat (y nach unten) → Papier: linke obere Ecke, Breiten- und Höhenrichtung
+          const c = Math.cos(it.rot ?? 0), sn = Math.sin(it.rot ?? 0);
+          const tl = P({ x: it.p.x - it.h * sn, y: it.p.y + it.h * c }), bl = P(it.p), br = P({ x: it.p.x + it.w * c, y: it.p.y + it.w * sn });
+          const op = it.ht ? 0.45 : it.alpha ?? 1;
+          this.body.push(`<image href="${esc(it.src)}" x="0" y="0" width="1" height="1" preserveAspectRatio="none"${op < 1 ? ` opacity="${n(op)}"` : ''} transform="matrix(${[br.x - bl.x, br.y - bl.y, bl.x - tl.x, bl.y - tl.y, tl.x, tl.y].map((v) => String(v)).join(' ')})"/>`);
+          break;
+        }
         case 'text': {
           const f = it.font; const c = P(it.p);
           const mir = isMirror(o.xf);

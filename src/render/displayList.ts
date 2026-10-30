@@ -273,6 +273,7 @@ function primCrossesBox(it: Prim, box: BBox, scale: number): boolean {
     return hit;
   }
   if (it.k === 'text') { const r = textBox(it, scale); for (let i = 0; i < 4; i++) test(r[i], r[(i + 1) % 4]); return hit; }
+  if (it.k === 'image') { const r = imageCorners(it); for (let i = 0; i < 4; i++) test(r[i], r[(i + 1) % 4]); return hit || pointInRing(box.min, r); }
   forEachSeg(it, test);
   return hit;
 }
