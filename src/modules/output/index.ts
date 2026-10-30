@@ -5,6 +5,7 @@ import './sheets';
 import './viewports';
 import './schedules';
 import './print';
+import './pdfCommands';
 import './dxfCommands';
 import './images';
 import './callout';

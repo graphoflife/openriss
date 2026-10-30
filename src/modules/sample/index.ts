@@ -134,7 +134,7 @@ function buildSample(): void {
         pts: [{ x: 4970, y: 5604, z: 2954 }, { x: 30, y: 5604, z: 2954 }], dir: { x: 0, y: -1, z: 0 }, span: 208, hookA: 0, hookB: 0 } as El);
       const s = det.scale;
       const offs: V2[] = [P(14 * s, 14 * s), P(14 * s, -8 * s), P(14 * s, 4 * s)];
-      [r1, r2, r3].forEach((r, i) => { try { const t = createRebarTag(doc, r, det, offs[i], 'std', true); if (t) doc.add(t); } catch (e) { console.warn(e); } });
+      [r1, r2, r3].forEach((r, i) => { try { createRebarTag(doc, r, det, offs[i], 'std', true); } catch (e) { console.warn(e); } });
     }
 
     // Türliste

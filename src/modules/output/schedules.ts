@@ -3,11 +3,11 @@
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
-import { registerCommand, registerViewport, registerDLBuilder, ViewportLike, catDef, allCats, PropDef, GROUPS } from '../../core/registry';
+import { registerCommand, registerViewport, registerDLBuilder, ViewportLike, catDef, allCats, PropDef, GROUPS, scheduleKind } from '../../core/registry';
 import { View, levelOptions, materialOptions } from '../../core/view';
 import { fmtLen, fmtArea, fmtVolume, fmtNum, parseLen, parseNum, parseAngle, unitSettings } from '../../core/units';
 import { DisplayList, textWidth } from '../../render/displayList';
-import { boxCorners } from '../../core/geom';
+import { boxCorners, V2 } from '../../core/geom';
 import { buildViewDL } from '../../views/viewBuilder';
 import { modal, toast } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
@@ -126,6 +126,7 @@ export const schedDef = (v: View): SchedDef => ({ fields: [], sort: [], totals: 
 // ------------------------------------------------------------ Formatierung
 export function fmtField(f: SchedField | undefined, v: any): string {
   if (v === undefined || v === null || v === '') return '';
+  if (isSketch(v)) return v.text;
   if (typeof v === 'boolean') return v ? 'Ja' : 'Nein';
   if (typeof v === 'number') {
     if (!isFinite(v)) return '';
@@ -154,7 +155,11 @@ function csvNum(f: SchedField, v: number): string {
 const unitSuffix = (f: SchedField) => (f.unit === 'len' ? ` (${unitSettings.length})` : f.unit === 'area' ? ' (m²)' : f.unit === 'vol' ? ' (m³)' : f.unit === 'kg' ? ' (kg)' : '');
 const isNumField = (f: SchedField) => !!f.unit;
 
+/** Zellwert mit Skizze (z. B. Biegeform): Text für Tabelle/CSV, Polylinie (beliebige Einheit) mit Beschriftung je Segment für Pläne */
+export interface SketchCell { text: string; sketch: { pts: V2[]; labels?: (string | null)[] } }
+export const isSketch = (v: any): v is SketchCell => !!v && typeof v === 'object' && typeof v.text === 'string' && !!v.sketch;
 function cmp(a: any, b: any): number {
+  if (isSketch(a)) a = a.text; if (isSketch(b)) b = b.text;
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   return String(a ?? '').localeCompare(String(b ?? ''), 'de', { numeric: true });
 }
@@ -257,14 +262,39 @@ export function buildTable(doc: Doc, view: View): Table {
 }
 
 // ------------------------------------------------------------ Tabelle als Display-Liste (Plan, Druck, SVG)
+/** Skizze in ein Rechteck (Papier-mm) einpassen; flache Formen mindestens 3 mm hoch, Beschriftung außen an den Segmenten */
+function drawSketch(dl: DisplayList, sk: SketchCell['sketch'], x0: number, y0: number, x1: number, y1: number): void {
+  const P = sk.pts; if (P.length < 2) return;
+  let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
+  for (const p of P) { bx0 = Math.min(bx0, p.x); bx1 = Math.max(bx1, p.x); by0 = Math.min(by0, p.y); by1 = Math.max(by1, p.y); }
+  const W = x1 - x0 - 10, H = y1 - y0 - 7, w = bx1 - bx0, hh = by1 - by0;
+  const k = Math.min(w > 1e-6 ? W / w : Infinity, hh > 1e-6 ? H / hh : Infinity);
+  const kx = isFinite(k) ? (w * k < 3 && w > 1e-6 ? 3 / w : k) : 0, ky = isFinite(k) ? (hh * k < 3 && hh > 1e-6 ? 3 / hh : k) : 0;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, mx = (bx0 + bx1) / 2, my = (by0 + by1) / 2;
+  const Q = P.map((p) => ({ x: cx + (p.x - mx) * kx, y: cy + (p.y - my) * ky }));
+  dl.poly(Q, { w: 3 }, false, { ns: true });
+  const c = Q.reduce((s, q) => ({ x: s.x + q.x / Q.length, y: s.y + q.y / Q.length }), { x: 0, y: 0 });
+  for (let i = 0; i + 1 < Q.length; i++) {
+    const s = sk.labels?.[i]; if (!s) continue;
+    const a = Q[i], b = Q[i + 1]; const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    let nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
+    if (Q.length === 2) { nx = 0; ny = 1; } else if ((m.x - c.x) * nx + (m.y - c.y) * ny < 0) { nx = -nx; ny = -ny; }
+    dl.text({ x: m.x + nx * 1.6, y: m.y + ny * 1.6 }, s, { size: 1.8, ha: Math.abs(nx) > 0.7 ? (nx > 0 ? 'left' : 'right') : 'center', va: Math.abs(ny) > 0.7 ? (ny > 0 ? 'bottom' : 'top') : 'middle' });
+  }
+}
+
 registerDLBuilder('schedule', (doc, view) => {
+  const sk = scheduleKind(view);
+  if (sk) return sk.dl(doc, view);
   const t = buildTable(doc, view);
   const dl = new DisplayList(1);
-  const fs = 2.5, pad = 1.5, rh = 6, hh = 7, th = 9;
+  const fs = 2.5, pad = 1.5, rh0 = 6, hh = 7, th = 9, rhS = 15;
   const n = t.fields.length;
   if (!n) { dl.text({ x: 0, y: 0 }, view.name + ' (keine Felder)', { size: 3.5, bold: true }); return dl; }
-  const cw = t.fields.map((_f, i) => Math.max(14, textWidth(t.heads[i], fs * 1.08) + 2 * pad,
-    ...t.rows.filter((r) => r.kind === 'data' || r.kind === 'footer' || r.kind === 'total').map((r) => textWidth(r.text[i] ?? '', fs * (r.kind === 'data' ? 1 : 1.08)) + 2 * pad)));
+  const sketchCol = t.fields.map((_f, i) => t.rows.some((r) => isSketch(r.cells[i])));
+  const cw = t.fields.map((_f, i) => Math.max(sketchCol[i] ? 50 : 14, textWidth(t.heads[i], fs * 1.08) + 2 * pad,
+    ...t.rows.filter((r) => (r.kind === 'data' && !sketchCol[i]) || r.kind === 'footer' || r.kind === 'total').map((r) => textWidth(r.text[i] ?? '', fs * (r.kind === 'data' ? 1 : 1.08)) + 2 * pad)));
   const W = cw.reduce((s, x) => s + x, 0);
   const xs: number[] = [0]; for (const w of cw) xs.push(xs[xs.length - 1] + w);
   const thin = { w: 1 }, bold = { w: 3 };
@@ -277,10 +307,17 @@ registerDLBuilder('schedule', (doc, view) => {
   y -= hh;
   dl.line({ x: 0, y }, { x: W, y }, bold);
   for (const r of t.rows) {
+    const rh = r.kind === 'data' && r.cells.some(isSketch) ? rhS : rh0;
     const yc = y - rh / 2;
     if (r.kind === 'group') dl.text({ x: pad, y: yc }, r.text[0] ?? '', { size: fs, bold: true, va: 'middle' });
     else if (r.kind !== 'blank') {
       for (let i = 0; i < n; i++) {
+        const cv = r.cells[i];
+        if (isSketch(cv)) {
+          dl.text({ x: xs[i] + 1, y: y - 0.8 }, cv.text.split(':')[0], { size: 1.6, va: 'top', color: '#606060' });
+          drawSketch(dl, cv.sketch, xs[i] + pad, y - rh, xs[i + 1] - pad, y - 2);
+          continue;
+        }
         const s = r.text[i] ?? ''; if (!s) continue;
         const num = typeof r.cells[i] === 'number';
         const label = r.kind !== 'data' && !num;
@@ -299,6 +336,8 @@ registerDLBuilder('schedule', (doc, view) => {
 
 // ------------------------------------------------------------ CSV-Export
 export function scheduleCsv(doc: Doc, view: View): string {
+  const sk = scheduleKind(view);
+  if (sk) return '\ufeff' + (sk.csv?.(doc, view) ?? '');
   const t = buildTable(doc, view);
   const q = (s: string) => (/[;"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
   const lines: string[] = [];
@@ -470,6 +509,8 @@ export function editSchedule(v: View, tab: Tab = 'fields'): void {
 
 extendViewProps('schedule', (v, doc, base) => {
   const g = GROUPS;
+  const sk = scheduleKind(v as View);
+  if (sk) return [...base.filter((p) => p.key !== 'titleOnSheet'), { key: 'schedCat', label: 'Liste', group: g.identity, type: 'readonly', get: () => sk.label }, ...(sk.props?.(v as View, doc) ?? [])];
   const btn = (key: string, label: string, tab: Tab): PropDef => ({ key, label, group: g.other, type: 'button', get: () => 'Bearbeiten…', action: (e) => editSchedule(e as View, tab) });
   return [
     ...base.filter((p) => p.key !== 'titleOnSheet'),
@@ -520,6 +561,7 @@ class ScheduleView implements ViewportLike {
   private editing = false;
   private shown = false;
   private table: Table | null = null;
+  private defBtns: HTMLElement[] = [];
 
   constructor(view: View, host: HTMLElement) {
     this.view = view;
@@ -527,9 +569,10 @@ class ScheduleView implements ViewportLike {
     const bar = h('div', { class: 'sched-bar' });
     const b = (l: string, fn: () => void, tip = '') => { const x = h('button', { class: 'btn small', title: tip }, l); x.onclick = fn; return x; };
     this.info = h('span', {});
+    this.defBtns = [b('Felder…', () => editSchedule(this.cur(), 'fields')), b('Filter…', () => editSchedule(this.cur(), 'filter')),
+      b('Sortieren/Gruppieren…', () => editSchedule(this.cur(), 'sort')), b('Formatierung…', () => editSchedule(this.cur(), 'format'))];
     bar.append(
-      b('Felder…', () => editSchedule(this.cur(), 'fields')), b('Filter…', () => editSchedule(this.cur(), 'filter')),
-      b('Sortieren/Gruppieren…', () => editSchedule(this.cur(), 'sort')), b('Formatierung…', () => editSchedule(this.cur(), 'format')),
+      ...this.defBtns,
       h('span', { class: 'sp' }), this.info,
       b('Im Modell markieren', () => this.showInModel(), 'Ausgewählte Elemente in einer Ansicht zeigen'),
       b('CSV exportieren', () => download(fileBase(this.cur()) + '.csv', scheduleCsv(app.doc, this.cur()), 'text/csv;charset=utf-8')),
@@ -569,6 +612,14 @@ class ScheduleView implements ViewportLike {
     const v = this.cur(); this.view = v;
     const doc = app.doc;
     const st = this.scroll.scrollTop, sl = this.scroll.scrollLeft;
+    const sk = scheduleKind(v);
+    for (const btn of this.defBtns) btn.style.display = sk ? 'none' : '';
+    if (sk) {
+      try { this.scroll.innerHTML = sk.html(doc, v); } catch (e) { console.error(e); this.scroll.textContent = 'Liste konnte nicht berechnet werden.'; }
+      this.info.textContent = sk.count ? `${sk.count(doc, v)} Positionen` : '';
+      this.scroll.scrollTop = st; this.scroll.scrollLeft = sl;
+      return;
+    }
     let t: Table;
     try { t = buildTable(doc, v); } catch (e) { console.error(e); this.scroll.textContent = 'Bauteilliste konnte nicht berechnet werden.'; return; }
     this.table = t;

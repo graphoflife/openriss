@@ -10,7 +10,7 @@ import { mat } from '../../core/template';
 import { fmtNum } from '../../core/units';
 
 /** Kategorien, die Bewehrung aufnehmen können (Host) */
-export const HOST_CATS = ['wall', 'floor', 'column', 'beam', 'foundationIsolated', 'foundationWall', 'foundationSlab'];
+export const HOST_CATS = ['wall', 'floor', 'column', 'beam', 'foundationIsolated', 'foundationWall', 'foundationSlab', 'stair'];
 /** Eigene Bewehrungskategorien (folgen ihrem Host) */
 export const REBAR_CATS = ['rebar', 'areaRebar', 'fabricArea'];
 export const REBAR_COLOR = '#8b1a1a';

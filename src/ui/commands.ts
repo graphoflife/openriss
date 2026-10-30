@@ -9,11 +9,13 @@ import { WallTool, StructuralWallTool, LinesTool, GridTool, RefPlaneTool, LevelT
 import { MoveTool, CopyTool, RotateTool, MirrorTool, ArrayTool, ScaleTool, AlignTool, TrimTool, TrimSingleTool, SplitTool, OffsetTool, MatchTool, MeasureTool, PasteTool, copyToClipboard, pasteAt } from '../tools/modifyTools';
 import { Tool, ToolEvent } from '../tools/tool';
 import type { DisplayList } from '../render/displayList';
-import { overrideDialog, purgeDialog, visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
+import { modal, overrideDialog, purgeDialog, visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
 import { getTempVis, resetTempVis } from '../views/viewBuilder';
 import { bumpTempVis } from '../views/canvasView';
 import { tempHide, tempIsolate, showMenu, SCALES } from './viewControlBar';
-import { createNew, openProject, saveProject } from '../io/file';
+import { createNew, openProject, saveProject, pickFileText } from '../io/file';
+import { importElements, normalizeImport } from '../io/jsonImport';
+import { fitElevationsTo } from '../views/fitElevations';
 import { h, runCmd } from './shell';
 import { icon } from './icons';
 import { duplicateView, renameView } from './browser';
@@ -59,9 +61,9 @@ function fileMenu(): void {
   };
   item('new', 'Strg+N'); item('open', 'Strg+O'); item('save', 'Strg+S'); item('saveAs', 'Strg+Umschalt+S');
   m.append(h('div', { class: 'fm-sep' }), h('div', { class: 'fm-head' }, 'Exportieren / Drucken'));
-  for (const id of ['print', 'exportPdf', 'exportSvg', 'exportPng', 'exportDxf', 'exportIfc', 'exportCsv']) item(id);
+  for (const id of ['print', 'exportPdf', 'exportPdfAll', 'exportSvg', 'exportPng', 'exportDxf', 'exportIfc', 'exportCsv']) item(id);
   m.append(h('div', { class: 'fm-sep' }), h('div', { class: 'fm-head' }, 'Einfügen'));
-  for (const id of ['importDxf', 'importImage', 'loadSample']) item(id);
+  for (const id of ['importDxf', 'importImage', 'importProjectJson', 'loadSample']) item(id);
   m.append(h('div', { class: 'fm-sep' }));
   item('projectInfo'); item('keyboardShortcuts'); item('help');
   document.body.append(m);
@@ -137,7 +139,33 @@ registerPanel('Ingenieurbau', 'Fundament', ['foundationIsolated', 'foundationWal
 registerPanel('Ingenieurbau', 'Bewehrung', ['rebar', 'stirrup', 'areaRebar', 'fabricArea', 'rebarCover', 'rebarSchedule'], 30);
 registerPanel('Ingenieurbau', 'Bezug', ['level', 'grid', 'refplane'], 60);
 
-registerPanel('Einfügen', 'Verknüpfen / Importieren', ['importDxf', 'importImage', 'loadSample'], 10);
+registerCommand({ id: 'importProjectJson', label: 'Projekt aus JSON', icon: 'import', tip: 'Elementliste (JSON) prüfen und importieren – Fehler werden mit Element-ID und Feld gemeldet', run: importProjectJson });
+registerPanel('Einfügen', 'Verknüpfen / Importieren', ['importDxf', 'importImage', 'importProjectJson', 'loadSample'], 10);
+
+async function importProjectJson(): Promise<void> {
+  let data: any;
+  try { data = JSON.parse(await pickFileText('.json,.oriss')); } catch (e) { alert('Datei konnte nicht gelesen werden: ' + (e as Error).message); return; }
+  const n = normalizeImport(data).length;
+  const full = !!data?.format;
+  const check = importElements(app.doc, data, { dryRun: true, replace: full });
+  const body = h('div', { style: 'min-width:520px;max-height:60vh;overflow:auto' });
+  body.append(h('div', {}, `${n} Element(e) gefunden${full ? ' (vollständiges Projekt)' : ''}.`));
+  if (check.errors.length) {
+    body.append(h('div', { style: 'color:#b03030;margin:6px 0' }, `${check.errors.length} Fehler – Import nicht möglich:`));
+    const t = h('table', { class: 'grid' });
+    t.append(h('tr', {}, h('th', {}, 'Element'), h('th', {}, 'Kategorie'), h('th', {}, 'Feld'), h('th', {}, 'Meldung')));
+    for (const e of check.errors.slice(0, 300)) t.append(h('tr', {}, h('td', {}, e.id), h('td', {}, e.cat), h('td', {}, e.field), h('td', {}, e.msg)));
+    body.append(t);
+    modal('Projekt aus JSON', body, [{ label: 'Schließen', primary: true, onClick: () => {} }], 720);
+    return;
+  }
+  const run = (replace: boolean) => { const r = importElements(app.doc, data, { replace }); app.refreshViews(); app.emit('views'); app.status(`${r.added} Element(e) importiert.`); };
+  modal('Projekt aus JSON', body, [
+    { label: 'Hinzufügen', primary: !full, onClick: () => run(false) },
+    ...(full ? [{ label: 'Projekt ersetzen', primary: true, onClick: () => { if (!app.doc.dirty || confirm('Aktuelles Projekt ersetzen?')) run(true); } }] : []),
+    { label: 'Abbrechen', onClick: () => {} },
+  ], 560);
+}
 
 registerPanel('Beschriften', 'Bemaßung', ['dimAligned', 'dimLinear', 'dimAngular', 'dimRadial', 'dimArc', 'spotElevation', 'spotCoordinate'], 10);
 registerPanel('Beschriften', 'Detail', ['detailLine', 'filledRegion', 'detailComponent', 'insulation', 'revisionCloud'], 20);
@@ -191,11 +219,12 @@ registerCommand({ id: 'legendView', label: 'Legende', icon: 'legend', run: () =>
     app.openView(id);
   });
 } });
+registerCommand({ id: 'fitElevations', label: 'Ansichten an Modell anpassen', icon: 'elevation', tip: 'Gebäudeansichten (Süd/Nord/Ost/West) um die Modellausdehnung legen und Zuschnitt anpassen', run: () => { fitElevationsTo(app.doc); app.refreshViews(); app.status('Gebäudeansichten an das Modell angepasst.'); } });
 registerCommand({ id: 'duplicateView', label: 'Ansicht duplizieren', icon: 'copy', enabled: () => !!app.activeView(), run: () => { const v = app.activeView(); if (v) app.openView(duplicateView(v, false)); } });
 registerCommand({ id: 'viewRange', label: 'Ansichtsbereich', icon: 'plan', enabled: () => !!app.activeView() && isPlanLike(app.activeView()!), run: () => viewRangeDialog(app.activeView()!) });
 
 registerPanel('Ansicht', 'Grafik', ['vv', 'thinLines', 'tempReset', 'revealHidden'], 10);
-registerPanel('Ansicht', 'Erstellen', ['default3d', 'section', 'elevation', 'callout', 'planView', 'draftingView', 'legendView', 'schedule', 'duplicateView'], 20);
+registerPanel('Ansicht', 'Erstellen', ['default3d', 'section', 'elevation', 'callout', 'planView', 'draftingView', 'legendView', 'schedule', 'duplicateView', 'fitElevations'], 20);
 registerPanel('Ansicht', 'Plankomposition', ['sheet', 'placeView', 'titleblock', 'revisions'], 30);
 registerPanel('Ansicht', 'Fenster', ['closeInactive', 'tileViews', 'zoomExtents', 'zoomRegion'], 40);
 

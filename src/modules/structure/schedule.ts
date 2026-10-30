@@ -1,5 +1,6 @@
 // Stahlliste / Biegeliste: je Position Anzahl, Ø, Biegeform (Skizze mit Schenkellängen in cm),
-// Einzel-/Gesamtlänge, Gewicht; Summen je Durchmesser; Mattenliste. CSV-Export und Druck.
+// Einzel-/Gesamtlänge, Gewicht; Summen je Durchmesser; Mattenliste. Je Bewehrungsplan filterbar, wahlweise als
+// Eisenliste nach SSHV (CH). CSV-, ABS-Export, Druck, Vorlagen «Stahlliste je Plan» / «Eisenliste» als Bauteilliste.
 import { app } from '../../app';
 import type { Doc, Id } from '../../core/doc';
 import { V2, V3, sub3, dot3, cross3, norm3, len3 } from '../../core/geom';
@@ -11,38 +12,50 @@ import { fmtNum } from '../../core/units';
 import { Rebar, rebarGeo, SHAPE_NAMES, hostLabel } from './rebar/rebar';
 import { kgPerM } from './rebar/math';
 import { AreaRebar, FabricArea, areaRows, fabricRows } from './rebar/area';
+import { planOf, inPlan, rebarPlans, isSia } from './rebar/norm';
+import { rebarFigure, renumberPlans, eisenlisteCsv, absExport, absFiles, createRebarSchedule, createEisenliste } from './steel';
+import { eisenlisteHtml, eisenlisteDocument, EISEN_CSS } from './eisenliste';
 
-export interface SteelRow { pos: number; n: number; dia: number; code: string; full: V3[]; legs: number[]; len: number | null; lenText: string; total: number; kg: number; hosts: string[]; ids: Id[]; warn?: boolean }
+export { eisenlisteCsv };
+export interface SteelRow { plan: string; pos: number; n: number; dia: number; code: string; form: string; full: V3[]; legs: number[]; len: number | null; lenText: string; total: number; kg: number; hosts: string[]; ids: Id[]; warn?: boolean }
 
 const n2 = (v: number) => fmtNum(v, 2);
 const cmI = (mm: number) => String(Math.round(mm / 10));
 
-/** Zeilen der Stahlliste */
+/** Zeilen der Stahlliste (getrennt je Bewehrungsplan) */
 export function steelRows(doc: Doc, rebars: Rebar[], areas: AreaRebar[], merge: boolean): SteelRow[] {
   const groups = new Map<string, SteelRow>();
-  const posSig = new Map<number, string>();
+  const posSig = new Map<string, string>();
   for (const r of rebars) {
-    const g = rebarGeo(doc, r);
-    const key = merge ? g.sig : r.pos + '|' + g.sig;
+    const g = rebarGeo(doc, r); const plan = planOf(r);
+    const key = plan + '|' + (merge ? g.sig : r.pos + '|' + g.sig);
     let row = groups.get(key);
     if (!row) {
-      row = { pos: r.pos, n: 0, dia: r.dia, code: g.code, full: g.full, legs: g.legs, len: g.len, lenText: n2(g.len / 1000), total: 0, kg: 0, hosts: [], ids: [] };
+      row = { plan, pos: r.pos, n: 0, dia: r.dia, code: g.code, form: rebarFigure(doc, r).nr, full: g.full, legs: g.legs, len: g.len, lenText: n2(g.len / 1000), total: 0, kg: 0, hosts: [], ids: [] };
       groups.set(key, row);
     }
     row.pos = Math.min(row.pos, r.pos);
     row.n += g.n; row.total += g.len * g.n; row.kg += (g.len * g.n / 1000) * kgPerM(r.dia); row.ids.push(r.id);
     const hl = hostLabel(doc, r.hostId); if (!row.hosts.includes(hl)) row.hosts.push(hl);
-    const ps = posSig.get(r.pos);
-    if (ps && ps !== g.sig) row.warn = true; else posSig.set(r.pos, g.sig);
+    const pk = plan + '|' + r.pos; const ps = posSig.get(pk);
+    if (ps && ps !== g.sig) row.warn = true; else posSig.set(pk, g.sig);
   }
   const rows = [...groups.values()];
   for (const a of areaRows(doc, areas)) {
     const lmin = Math.min(...a.lens), lmax = Math.max(...a.lens);
     const same = lmax - lmin < 10;
-    rows.push({ pos: a.pos, n: a.n, dia: a.dia, code: '00', full: [{ x: 0, y: 0, z: 0 }, { x: lmax, y: 0, z: 0 }], legs: [lmax], len: same ? lmax : null,
+    rows.push({ plan: planOf(doc.get(a.elId)), pos: a.pos, n: a.n, dia: a.dia, code: '00', form: '1', full: [{ x: 0, y: 0, z: 0 }, { x: lmax, y: 0, z: 0 }], legs: [lmax], len: same ? lmax : null,
       lenText: same ? n2(lmax / 1000) : `${n2(lmin / 1000)}…${n2(lmax / 1000)}`, total: a.total, kg: a.kg, hosts: [hostLabel(doc, a.hostId) + ' – ' + a.label], ids: [] });
   }
-  return rows.sort((a, b) => a.pos - b.pos || a.dia - b.dia);
+  return rows.sort((a, b) => a.plan.localeCompare(b.plan, 'de', { numeric: true }) || a.pos - b.pos || a.dia - b.dia);
+}
+/** Zeilen und Matten eines Plans (plan undefined = alle) */
+export function steelData(doc: Doc, plan?: string, merge = true, sel?: (e: { id: Id; hostId?: Id }) => boolean) {
+  const ok = (e: any) => inPlan(e, plan) && (!sel || sel(e));
+  return {
+    rows: steelRows(doc, doc.all<Rebar>('rebar').filter(ok), doc.all<AreaRebar>('areaRebar').filter(ok), merge),
+    mats: fabricRows(doc, doc.all<FabricArea>('fabricArea').filter(ok)),
+  };
 }
 
 // ------------------------------------------------------------ Biegeform-Skizze
@@ -85,37 +98,61 @@ export function shapeSvg(full: V3[], legs: number[], W = 150, H = 54): string {
 }
 
 // ------------------------------------------------------------ Dialog
-export function steelListDialog(): void {
+export interface SteelListOpts { plan?: string; format?: 'din' | 'sshv' }
+export function steelListDialog(o: SteelListOpts = {}): void {
   const doc = app.doc;
   let merge = true;
   const selIds = new Set(app.selection);
   const hasSel = [...selIds].some((id) => { const e = doc.get(id); return !!e && (e.cat === 'rebar' || e.cat === 'areaRebar' || e.cat === 'fabricArea' || doc.all().some((x) => x.hostId === id)); });
   let onlySel = false;
-  const body = h('div', { style: 'min-width:760px' });
-  const data = () => {
-    const inSel = (e: { id: Id; hostId?: Id }) => !onlySel || selIds.has(e.id) || (!!e.hostId && selIds.has(e.hostId));
-    const rebars = doc.all<Rebar>('rebar').filter(inSel);
-    const areas = doc.all<AreaRebar>('areaRebar').filter(inSel);
-    const fabrics = doc.all<FabricArea>('fabricArea').filter(inSel);
-    return { rows: steelRows(doc, rebars, areas, merge), mats: fabricRows(doc, fabrics) };
-  };
+  const plans = rebarPlans(doc);
+  let plan: string | undefined = o.plan ?? (plans.length > 1 && plans.includes(planOf(app.selected()[0])) ? planOf(app.selected()[0]) : undefined);
+  let fmt: 'din' | 'sshv' = o.format ?? (isSia(doc) ? 'sshv' : 'din');
+  const body = h('div', { style: 'min-width:820px' });
+  const sel = (e: { id: Id; hostId?: Id }) => !onlySel || selIds.has(e.id) || (!!e.hostId && selIds.has(e.hostId));
+  const data = () => steelData(doc, plan, merge, sel);
+  const idsOf = () => (onlySel ? new Set([...doc.all('rebar'), ...doc.all('areaRebar')].filter(sel).map((e) => e.id)) : undefined);
   const render = () => {
     body.innerHTML = '';
-    const opts = h('div', { class: 'form-row' });
-    const cbM = h('input', { type: 'checkbox' }) as HTMLInputElement; cbM.checked = merge; cbM.onchange = () => { merge = cbM.checked; render(); };
-    opts.append(h('label', { style: 'min-width:0' }, cbM, ' Positionen zusammenfassen (gleiche Stäbe)'));
-    if (hasSel) { const cbS = h('input', { type: 'checkbox' }) as HTMLInputElement; cbS.checked = onlySel; cbS.onchange = () => { onlySel = cbS.checked; render(); }; opts.append(h('label', { style: 'min-width:0;margin-left:16px' }, cbS, ' Nur Auswahl')); }
+    const opts = h('div', { class: 'form-row', style: 'gap:14px;flex-wrap:wrap' });
+    if (plans.length > 1 || (plans.length === 1 && plans[0])) {
+      const ps = h('select', {}) as HTMLSelectElement;
+      ps.append(h('option', { value: '*' }, 'Alle Pläne'));
+      for (const p of plans) ps.append(h('option', { value: p }, p || '(ohne Plan)'));
+      ps.value = plan === undefined ? '*' : plan; ps.onchange = () => { plan = ps.value === '*' ? undefined : ps.value; render(); };
+      opts.append(h('label', { style: 'min-width:0' }, 'Bewehrungsplan ', ps));
+    }
+    const fs = h('select', {}) as HTMLSelectElement;
+    fs.append(h('option', { value: 'din' }, 'Stahlliste / Biegeliste'), h('option', { value: 'sshv' }, 'Eisenliste nach SSHV (CH)'));
+    fs.value = fmt; fs.onchange = () => { fmt = fs.value as 'din' | 'sshv'; render(); };
+    opts.append(h('label', { style: 'min-width:0' }, 'Format ', fs));
+    if (fmt === 'din') { const cbM = h('input', { type: 'checkbox' }) as HTMLInputElement; cbM.checked = merge; cbM.onchange = () => { merge = cbM.checked; render(); }; opts.append(h('label', { style: 'min-width:0' }, cbM, ' Positionen zusammenfassen (gleiche Stäbe)')); }
+    if (hasSel) { const cbS = h('input', { type: 'checkbox' }) as HTMLInputElement; cbS.checked = onlySel; cbS.onchange = () => { onlySel = cbS.checked; render(); }; opts.append(h('label', { style: 'min-width:0' }, cbS, ' Nur Auswahl')); }
     body.append(opts);
-    const { rows, mats } = data();
-    body.append(h('div', { style: 'max-height:62vh;overflow:auto', html: htmlTables(doc, rows, mats, true) }));
+    if (fmt === 'sshv') body.append(h('div', { style: 'max-height:62vh;overflow:auto', html: `<style>${EISEN_CSS}</style>` + eisenlisteHtml(doc, { plan, ids: idsOf() }) }));
+    else { const { rows, mats } = data(); body.append(h('div', { style: 'max-height:62vh;overflow:auto', html: htmlTables(doc, rows, mats, true) })); }
   };
   render();
-  modal('Stahlliste / Biegeliste (B500B)', body, [
-    { label: 'Neu nummerieren', onClick: () => { renumber(doc, merge); render(); return false; } },
-    { label: 'CSV exportieren', onClick: () => { const d = data(); download(fileBase(doc) + '_Stahlliste.csv', '﻿' + csv(d.rows, d.mats), 'text/csv;charset=utf-8'); return false; } },
-    { label: 'Drucken', onClick: () => { const d = data(); printList(doc, d.rows, d.mats); return false; } },
+  const exportAbs = () => {
+    const files = plan !== undefined ? [{ name: (plan || 'ohne_Plan') + '.abs', text: absExport(doc, plan) }] : absFiles(doc);
+    if (!files.some((f) => f.text)) { app.status('Keine Positionen für den ABS-Export.'); return; }
+    for (const f of files) if (f.text) download(f.name, f.text, 'text/plain;charset=us-ascii');
+    app.status(`${files.length} ABS-Datei(en) exportiert (BVBS 3.1).`);
+  };
+  modal('Stahlliste / Eisenliste', body, [
+    { label: 'Neu nummerieren', onClick: () => { renumber(doc, merge, plan); render(); return false; } },
+    { label: 'CSV exportieren', onClick: () => {
+      const csv = fmt === 'sshv' ? eisenlisteCsv(doc, plan) : stahllisteCsv(doc, plan, merge);
+      download(fileBase(doc) + (plan ? '_' + plan : '') + (fmt === 'sshv' ? '_Eisenliste.csv' : '_Stahlliste.csv'), '﻿' + csv, 'text/csv;charset=utf-8'); return false;
+    } },
+    { label: 'ABS (BVBS)', onClick: () => { exportAbs(); return false; } },
+    { label: 'Als Bauteilliste', onClick: () => {
+      const v = fmt === 'sshv' ? createEisenliste(doc, plan) : createRebarSchedule(doc, plan);
+      app.emit('views'); app.openView(v.id); app.status(`Bauteilliste „${v.name}“ erstellt – kann auf Pläne gezogen werden.`);
+    } },
+    { label: 'Drucken', onClick: () => { if (fmt === 'sshv') printHtml(eisenlisteDocument(doc, { plan, ids: idsOf() })); else { const d = data(); printList(doc, d.rows, d.mats); } return false; } },
     { label: 'Schließen', primary: true, onClick: () => {} },
-  ], 860);
+  ], 900);
 }
 
 const fileBase = (doc: Doc) => (projectInfo(doc)?.name || 'Projekt').replace(/[^\wäöüÄÖÜß-]+/g, '_');
@@ -130,12 +167,13 @@ function perDia(rows: SteelRow[]): { dia: number; total: number; kg: number }[] 
 export function htmlTables(doc: Doc, rows: SteelRow[], mats: ReturnType<typeof fabricRows>, screen: boolean): string {
   const th = (s: string, w = '') => `<th style="${w ? 'width:' + w + ';' : ''}text-align:center">${s}</th>`;
   const td = (s: string, right = false) => `<td style="${right ? 'text-align:right;' : ''}vertical-align:middle">${s}</td>`;
-  let html = `<table class="grid" style="width:100%;border-collapse:collapse"><tr>${th('Pos.', '40px')}${th('Anzahl', '50px')}${th('Ø<br>[mm]', '40px')}${th('Biegeform', '170px')}${th('Einzellänge<br>[m]', '80px')}${th('Gesamtlänge<br>[m]', '85px')}${th('Gewicht<br>[kg]', '75px')}${th('Bauteil')}</tr>`;
+  const multi = new Set(rows.map((r) => r.plan)).size > 1;
+  let html = `<table class="grid" style="width:100%;border-collapse:collapse"><tr>${multi ? th('Plan', '50px') : ''}${th('Pos.', '40px')}${th('Anzahl', '50px')}${th('Ø<br>[mm]', '40px')}${th('Biegeform', '170px')}${th('Einzellänge<br>[m]', '80px')}${th('Gesamtlänge<br>[m]', '85px')}${th('Gewicht<br>[kg]', '75px')}${th('Bauteil')}</tr>`;
   for (const r of rows) {
-    const form = `<div style="display:flex;align-items:center;gap:4px"><span style="min-width:22px;font-weight:600">${r.code}</span>${shapeSvg(r.full, r.legs)}</div>`;
-    html += `<tr>${td(`<b>${r.pos}</b>${r.warn ? ' <span title="Positionsnummer mehrfach mit unterschiedlicher Form vergeben" style="color:#c03030">⚠</span>' : ''}`)}${td(String(r.n), true)}${td(String(r.dia), true)}${td(form)}${td(r.lenText, true)}${td(n2(r.total / 1000), true)}${td(n2(r.kg), true)}${td(`<span style="font-size:11px;color:#444">${esc(r.hosts.slice(0, 3).join('; '))}${r.hosts.length > 3 ? ' …' : ''}</span><br><span style="font-size:10px;color:#888">${esc(SHAPE_NAMES[r.code] ?? '')}</span>`)}</tr>`;
+    const form = `<div style="display:flex;align-items:center;gap:4px"><span style="min-width:22px;font-weight:600" title="SSHV-Form ${r.form || '–'}">${r.code}</span>${shapeSvg(r.full, r.legs)}</div>`;
+    html += `<tr>${multi ? td(esc(r.plan)) : ''}${td(`<b>${r.pos}</b>${r.warn ? ' <span title="Positionsnummer mehrfach mit unterschiedlicher Form vergeben" style="color:#c03030">⚠</span>' : ''}`)}${td(String(r.n), true)}${td(String(r.dia), true)}${td(form)}${td(r.lenText, true)}${td(n2(r.total / 1000), true)}${td(n2(r.kg), true)}${td(`<span style="font-size:11px;color:#444">${esc(r.hosts.slice(0, 3).join('; '))}${r.hosts.length > 3 ? ' …' : ''}</span><br><span style="font-size:10px;color:#888">${esc(SHAPE_NAMES[r.code] ?? '')}${r.form ? ' · SSHV-Form ' + r.form : ''}</span>`)}</tr>`;
   }
-  if (!rows.length) html += `<tr><td colspan="8" style="color:#777">Keine Stabbewehrung vorhanden.</td></tr>`;
+  if (!rows.length) html += `<tr><td colspan="${multi ? 9 : 8}" style="color:#777">Keine Stabbewehrung vorhanden.</td></tr>`;
   html += '</table>';
   // Zusammenstellung je Ø
   const sums = perDia(rows);
@@ -146,7 +184,7 @@ export function htmlTables(doc: Doc, rows: SteelRow[], mats: ReturnType<typeof f
   // Mattenliste
   if (mats.length) {
     const mt = mats.reduce((s, x) => s + x.kg, 0);
-    html += `<h4 style="margin:10px 0 4px">Mattenliste (Lagermatten B500A, 6,00 × 2,30 m)</h4><table class="grid" style="border-collapse:collapse"><tr>${th('Mattentyp', '90px')}${th('Anzahl', '60px')}${th('kg/Matte', '70px')}${th('Fläche [m²]', '80px')}${th('Gewicht [kg]', '90px')}</tr>`;
+    html += `<h4 style="margin:10px 0 4px">Mattenliste (Lagermatten)</h4><table class="grid" style="border-collapse:collapse"><tr>${th('Mattentyp', '90px')}${th('Anzahl', '60px')}${th('kg/Matte', '70px')}${th('Fläche [m²]', '80px')}${th('Gewicht [kg]', '90px')}</tr>`;
     for (const m of mats) html += `<tr>${td(`<b>${m.type}</b>`)}${td(String(m.n), true)}${td(fmtNum(m.kgEach, 1), true)}${td(n2(m.area / 1e6), true)}${td(n2(m.kg), true)}</tr>`;
     html += `<tr><td colspan="4" style="text-align:right"><b>Summe Matten</b></td>${td(`<b>${n2(mt)}</b>`, true)}</tr></table>`;
     html += `<p style="margin:8px 0"><b>Gesamtgewicht Bewehrung: ${n2(total + mt)} kg</b></p>`;
@@ -156,8 +194,8 @@ export function htmlTables(doc: Doc, rows: SteelRow[], mats: ReturnType<typeof f
 }
 
 function csv(rows: SteelRow[], mats: ReturnType<typeof fabricRows>): string {
-  const L: string[] = ['Pos.;Anzahl;Ø [mm];Biegeform;Schenkel [cm];Einzellänge [m];Gesamtlänge [m];Gewicht [kg];Bauteil'];
-  for (const r of rows) L.push([r.pos, r.n, r.dia, r.code, r.legs.map(cmI).join('/'), r.lenText, n2(r.total / 1000), n2(r.kg), '"' + r.hosts.join('; ').replace(/"/g, "'") + '"'].join(';'));
+  const L: string[] = ['Plan;Pos.;Anzahl;Ø [mm];Biegeform;SSHV-Form;Schenkel [cm];Einzellänge [m];Gesamtlänge [m];Gewicht [kg];Bauteil'];
+  for (const r of rows) L.push([r.plan, r.pos, r.n, r.dia, r.code, r.form, r.legs.map(cmI).join('/'), r.lenText, n2(r.total / 1000), n2(r.kg), '"' + r.hosts.join('; ').replace(/"/g, "'") + '"'].join(';'));
   L.push('', 'Ø [mm];Länge [m];Gewicht [kg]');
   for (const x of perDia(rows)) L.push([x.dia, n2(x.total / 1000), n2(x.kg)].join(';'));
   L.push(['Summe', '', n2(rows.reduce((s, r) => s + r.kg, 0))].join(';'));
@@ -167,39 +205,32 @@ function csv(rows: SteelRow[], mats: ReturnType<typeof fabricRows>): string {
   }
   return L.join('\r\n');
 }
+/** Stahlliste als CSV (Semikolon, Dezimalkomma; plan undefined = alle Pläne) */
+export function stahllisteCsv(doc: Doc, plan?: string, merge = true): string {
+  const d = steelData(doc, plan, merge);
+  return csv(d.rows, d.mats) + '\r\n';
+}
 
-function printList(doc: Doc, rows: SteelRow[], mats: ReturnType<typeof fabricRows>): void {
+function printHtml(html: string): void {
   const w = window.open('', '_blank');
   if (!w) { alert('Druckfenster wurde blockiert.'); return; }
+  w.document.write(html); w.document.close();
+  setTimeout(() => { w.focus(); w.print(); }, 300);
+}
+function printList(doc: Doc, rows: SteelRow[], mats: ReturnType<typeof fabricRows>): void {
   const pi = projectInfo(doc);
-  w.document.write(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Stahlliste – ${esc(pi?.name ?? '')}</title><style>
+  printHtml(`<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Stahlliste – ${esc(pi?.name ?? '')}</title><style>
     body{font-family:Arial,Helvetica,sans-serif;font-size:12px;margin:15mm}h1{font-size:18px;margin:0 0 4px}
     table{border-collapse:collapse}th,td{border:1px solid #000;padding:2px 5px}th{background:#eee}
     .head{display:flex;justify-content:space-between;border-bottom:2px solid #000;margin-bottom:8px;padding-bottom:4px}
     @media print{body{margin:10mm}}</style></head><body>
-    <div class="head"><div><h1>Stahlliste / Biegeliste</h1>Betonstahl B500B · Biegerollendurchmesser nach DIN EN 1992-1-1/NA</div>
+    <div class="head"><div><h1>Stahlliste / Biegeliste${rows.length && new Set(rows.map((r) => r.plan)).size === 1 && rows[0].plan ? ' – Plan ' + esc(rows[0].plan) : ''}</h1>Betonstahl B500B · Biegerollendurchmesser nach ${isSia(doc) ? 'SIA 262' : 'DIN EN 1992-1-1/NA'}</div>
     <div style="text-align:right">${esc(pi?.name ?? '')}<br>Projekt-Nr. ${esc(pi?.number ?? '')}<br>${new Date().toLocaleDateString('de-DE')}</div></div>
     ${htmlTables(doc, rows, mats, false)}</body></html>`);
-  w.document.close();
-  setTimeout(() => { w.focus(); w.print(); }, 300);
 }
 
-/** Positionsnummern neu vergeben (gleiche Stäbe gleiche Nummer bei „zusammenfassen“) */
-export function renumber(doc: Doc, merge: boolean): void {
-  const rebars = doc.all<Rebar>('rebar').slice().sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0) || a.id.localeCompare(b.id));
-  const map = new Map<string, number>(); let next = 0;
-  doc.transaction('Positionen neu nummerieren', () => {
-    for (const r of rebars) {
-      const g = rebarGeo(doc, r);
-      const key = merge ? g.sig : r.pos + '|' + g.sig;
-      let p = map.get(key);
-      if (p === undefined) { p = ++next; map.set(key, p); }
-      if (r.pos !== p) doc.update(r.id, { pos: p });
-    }
-    for (const a of doc.all<AreaRebar>('areaRebar')) {
-      const layers = a.layers.map((l) => (l.on ? { ...l, pos: ++next } : l));
-      doc.update(a.id, { layers });
-    }
-  });
-  app.status(`Positionen 1 bis ${next} vergeben.`);
+/** Positionsnummern neu vergeben – je Bewehrungsplan ab 1 (plan angegeben: nur dieser); gleiche Stäbe gleiche Nummer bei „zusammenfassen“ */
+export function renumber(doc: Doc, merge: boolean, plan?: string): void {
+  const n = renumberPlans(doc, merge, plan);
+  app.status(`${n} Positionen vergeben${plan !== undefined ? ` (Plan ${plan || 'ohne Nummer'})` : ' (je Bewehrungsplan ab 1)'}.`);
 }

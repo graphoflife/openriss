@@ -40,6 +40,10 @@ export class App {
   private listeners = new Map<Ev, (() => void)[]>();
   statusText = '';
   promptText = '';
+  /** Projekt laden (.oriss-Text oder Objekt) – öffentlich, auch über window.openriss (gesetzt in io/file.ts) */
+  loadProject!: (data: string | { elements: El[] }) => void;
+  /** Projekt als .oriss-Text */
+  saveProject!: () => string;
 
   constructor() {
     try {
@@ -108,11 +112,11 @@ export class App {
   activeView(): View | null { return this.active?.view ?? null; }
   openView(id: Id): void {
     const v = this.doc.get<View>(id);
-    if (!v) return;
+    if (!v || !this.viewHost) return; // headless: keine Ansichtsfenster
     let vp = this.viewports.get(id);
     if (!vp) {
       const f = viewportFactory(v.kind);
-      if (!f) { alert('Diese Ansichtsart ist noch nicht verfügbar: ' + v.kind); return; }
+      if (!f) { if (typeof alert !== 'undefined') alert('Diese Ansichtsart ist noch nicht verfügbar: ' + v.kind); return; }
       vp = f.create(v, this.viewHost);
       this.viewports.set(id, vp);
       this.openOrder.push(id);

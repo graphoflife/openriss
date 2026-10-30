@@ -372,12 +372,12 @@ export function wallSolids(doc: Doc, w: Wall): Solid[] {
   const wraps = t ? wrappedLayers(t) : [];
   const pieces: { ring: Ring; mat?: Id; z1: number }[] = [];
   if (layers) {
-    const far = wi.L + wi.T * 20 + 10000;
     layers.forEach(({ lay, o0, o1 }, i) => {
       if (lay.t < 0.5) return;
-      const a0 = sub(wi.c0, mul(wi.d, far)), b0 = add(wi.c1, mul(wi.d, far));
-      const band: Ring = [add(a0, mul(wi.n, o0)), add(b0, mul(wi.n, o0)), add(b0, mul(wi.n, o1)), add(a0, mul(wi.n, o1))];
-      for (const p of intersection([ring], [band])) pieces.push({ ring: p[0], mat: lay.mat, z1: wraps[i] && !profile ? zWrap : z1 });
+      // Schichtstreifen per Halbebenen-Clipping (robust auch bei schrägen Wänden)
+      const p0 = add(wi.c0, mul(wi.n, o0)), p1 = add(wi.c0, mul(wi.n, o1));
+      const r = clipRingHalfPlane(clipRingHalfPlane(ring, p0, wi.d), p1, mul(wi.d, -1));
+      if (r.length >= 3 && Math.abs(signedArea(r)) > 1) pieces.push({ ring: r, mat: lay.mat, z1: wraps[i] && !profile ? zWrap : z1 });
     });
   } else pieces.push({ ring, mat: coreMat, z1 });
 

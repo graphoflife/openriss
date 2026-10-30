@@ -100,7 +100,7 @@ function printDialog(pdf: boolean): void {
 }
 
 registerCommand({ id: 'print', label: 'Drucken', icon: 'print', tip: 'Aktuellen Plan bzw. Ansicht oder mehrere Pläne drucken (Strg+P)', run: () => printDialog(false) });
-registerCommand({ id: 'exportPdf', label: 'PDF', icon: 'pdf', tip: 'Pläne/Ansichten als PDF (über den Druckdialog des Browsers „Als PDF speichern“)', run: () => printDialog(true) });
+// 'exportPdf' / 'exportPdfAll': direkter Vektor-PDF-Export ohne Druckdialog → pdfCommands.ts
 
 // ------------------------------------------------------------ SVG
 function activePage(): Page | null {

@@ -117,6 +117,12 @@ export interface ProjectInfo extends El {
   objStyles?: Record<string, { proj?: number; cut?: number; color?: string }>;
   /** Bewehrungsüberdeckung (mm) */
   rebarCover?: number;
+  /** Landesvorlage: Vorgaben für Bemaßungstyp, Höhenkoten, Plankopf (fehlt = 'DE') */
+  locale?: 'DE' | 'CH';
+  /** Höhenbezug: ±0.00 = … m ü. M. (Meter) */
+  elev00?: number;
+  /** Plankopf-Vorlage als Projektvorgabe (fehlt = nach Landesvorlage) */
+  titleBlock?: string;
 }
 export function projectInfo(doc: Doc): ProjectInfo { return doc.get<ProjectInfo>('project')!; }
 

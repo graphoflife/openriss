@@ -1,7 +1,7 @@
 // Dialoge: Typ bearbeiten, Wandschichten, Sichtbarkeit/Grafiken, Tastaturbefehle, Projektinformationen,
 // Projekteinheiten, Materialien, Objektstile, Auswahlfilter, Ansichtsbereich.
 import { app } from '../app';
-import { catDef, allCats, onHook, PropDef, allCommands } from '../core/registry';
+import { catDef, allCats, onHook, emitHook, PropDef, allCommands } from '../core/registry';
 import type { El, Id } from '../core/doc';
 import { newId } from '../core/doc';
 import { typesOf, TypeEl, Material, materialOptions, View, projectInfo, ProjectInfo, ViewRange, DEFAULT_RANGE } from '../core/view';
@@ -250,11 +250,28 @@ export function projectInfoDialog(): void {
     i.onchange = () => ((pi as any)[k] = i.value);
     body.append(h('div', { class: 'form-row' }, h('label', {}, l), i));
   }
+  // Zusatzfelder der Module (Landesvorlage, Höhenbezug, Plankopf-Vorlage …)
+  for (const f of piFields) {
+    let i: HTMLInputElement | HTMLSelectElement;
+    if (f.options) { i = h('select', {}) as HTMLSelectElement; for (const [k, l] of f.options) i.append(h('option', { value: k }, l)); }
+    else i = h('input', { type: 'text', placeholder: f.placeholder ?? '' }) as HTMLInputElement;
+    i.value = f.get(pi);
+    const inp = i; inp.onchange = () => f.set(pi, inp.value);
+    body.append(h('div', { class: 'form-row' }, h('label', {}, f.label), inp));
+  }
   modal('Projektinformationen', body, [
-    { label: 'OK', primary: true, onClick: () => { app.doc.transaction('Projektinformationen', () => app.doc.update('project', pi)); } },
+    { label: 'OK', primary: true, onClick: () => {
+      const before = { ...projectInfo(app.doc) };
+      app.doc.transaction('Projektinformationen', () => { app.doc.update('project', pi); emitHook('projectInfo', app.doc, before); });
+    } },
     { label: 'Abbrechen', onClick: () => {} },
   ], 480);
 }
+/** Zusatzfeld im Dialog «Projektinformationen» (Wert als Text; options = Auswahlliste) */
+export interface ProjectInfoField { key: string; label: string; options?: [string, string][]; placeholder?: string; get: (pi: ProjectInfo) => string; set: (pi: ProjectInfo, v: string) => void }
+const piFields: ProjectInfoField[] = [];
+/** Module ergänzen Felder; nach OK folgt Hook 'projectInfo' (doc, vorher) in derselben Transaktion */
+export function registerProjectInfoField(f: ProjectInfoField): void { if (!piFields.some((x) => x.key === f.key)) piFields.push(f); }
 
 // ------------------------------------------------------------ Projekteinheiten (UN)
 export function unitsDialog(): void {
@@ -285,7 +302,10 @@ export function applyUnits(): void {
   unitSettings.length = u?.length ?? 'mm';
   unitSettings.lengthDecimals = u?.decimals ?? (unitSettings.length === 'm' ? 2 : unitSettings.length === 'cm' ? 1 : 0);
   unitSettings.superscriptFive = !!u?.superscriptFive;
+  // Schweizer Projekte: Dezimalpunkt (±0.00, 2.75)
+  unitSettings.decimalSep = (projectInfo(app.doc) as any)?.locale === 'CH' ? '.' : ',';
 }
+onHook('projectInfo', () => { applyUnits(); app.refreshViews(); });
 
 // ------------------------------------------------------------ Materialien
 export function materialsDialog(): void {

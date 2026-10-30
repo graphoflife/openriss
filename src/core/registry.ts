@@ -194,7 +194,7 @@ export function allCommands(): Command[] { return [...commands.values()]; }
 // ---------------------------------------------------------------- Multifunktionsleiste
 export interface RibbonItem { cmd: string; size?: 'large' | 'small'; }
 export interface RibbonPanel { tab: string; panel: string; items: RibbonItem[]; order?: number; }
-export const TABS = ['Architektur', 'Ingenieurbau', 'Einfügen', 'Beschriften', 'Ansicht', 'Verwalten', 'Ändern'];
+export const TABS = ['Architektur', 'Ingenieurbau', 'Gebäudetechnik', 'Einfügen', 'Beschriften', 'Ansicht', 'Verwalten', 'Ändern'];
 const panels: RibbonPanel[] = [];
 export function registerPanel(tab: string, panel: string, items: (string | RibbonItem)[], order = 50): void {
   const existing = panels.find((p) => p.tab === tab && p.panel === panel);
@@ -242,6 +242,22 @@ export type DLBuilder = (doc: Doc, view: View) => DisplayList;
 const dlBuilders = new Map<string, DLBuilder>();
 export function registerDLBuilder(kind: string, b: DLBuilder): void { dlBuilders.set(kind, b); }
 export function dlBuilder(kind: string): DLBuilder | undefined { return dlBuilders.get(kind); }
+
+/** Sonderlisten: Bauteilliste (Ansichtsart 'schedule') mit eigener Darstellung, gewählt über View.data.kind (z. B. 'eisenliste') */
+export interface ScheduleKind {
+  label: string;
+  /** Display-Liste in Papier-mm (Plan, Druck, Export), Ursprung oben links */
+  dl: DLBuilder;
+  /** HTML für die Tabellenansicht */
+  html(doc: Doc, view: View): string;
+  csv?(doc: Doc, view: View): string;
+  count?(doc: Doc, view: View): number;
+  /** zusätzliche Eigenschaften der Listenansicht */
+  props?(view: View, doc: Doc): PropDef[];
+}
+const schedKinds = new Map<string, ScheduleKind>();
+export function registerScheduleKind(kind: string, k: ScheduleKind): void { schedKinds.set(kind, k); }
+export function scheduleKind(view: View | null | undefined): ScheduleKind | undefined { const k = view?.data?.kind; return typeof k === 'string' ? schedKinds.get(k) : undefined; }
 
 // ---------------------------------------------------------------- Projektbrowser-Erweiterungen
 export interface BrowserSection { id: string; label: string; order: number; items: (doc: Doc) => { id: Id; label: string; icon?: string }[]; onOpen?: (id: Id) => void; }

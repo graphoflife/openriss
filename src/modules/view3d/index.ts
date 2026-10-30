@@ -80,13 +80,14 @@ const projName = () => (projectInfo(app.doc)?.name || 'Projekt').replace(/[^\w\-
 
 registerCommand({
   id: 'exportIfc', label: 'IFC', icon: 'ifc',
-  tip: 'Modell als IFC4-Datei (*.ifc) exportieren – Geschosse aus Ebenen, Bauteile mit Geometrie, Materialien und Eigenschaften.',
+  tip: 'Modell als IFC4-Datei (*.ifc) exportieren – Geschosse aus Ebenen, Rohbauteile als Extrusion mit Öffnungen und Schichtaufbau, Bewehrung stabweise, Materialien und Eigenschaften (inkl. Schweizer Betonangaben).',
   run: () => {
     try {
       const name = projName() + '.ifc';
       const r = exportIfc(app.doc, name);
       download(name, r.text, 'application/x-step');
-      toast(`IFC exportiert: ${r.count} Elemente.`);
+      const nb = r.bars ?? 0;
+      toast(`IFC exportiert: ${r.count - nb} Bauteile${nb ? `, ${nb} Bewehrungsstäbe` : ''}${r.openings ? `, ${r.openings} Öffnungen` : ''}.`);
     } catch (e) { console.error(e); alert('IFC-Export fehlgeschlagen: ' + (e as Error).message); }
   },
 });

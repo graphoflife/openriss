@@ -30,8 +30,10 @@ export function buildBrowser(el: HTMLElement): void {
 
 interface Node { id: string; label: string; icon?: string; children?: Node[]; viewId?: Id; typeId?: Id; open?: () => void; menu?: () => ([string, () => void] | '-')[]; draggable?: boolean }
 
-function viewNodes(kind: View['kind'], ic: string): Node[] {
-  const vs = app.doc.all<View>('view').filter((v) => v.kind === kind);
+/** Wandabwicklungen (Tragwerk) sind Schnitte mit data.dev und stehen in einer eigenen Gruppe */
+const isDev = (v: View) => !!v.data?.dev;
+function viewNodes(kind: View['kind'], ic: string, dev = false): Node[] {
+  const vs = app.doc.all<View>('view').filter((v) => v.kind === kind && (kind !== 'section' || isDev(v) === dev));
   const lv = new Map(levels(app.doc).map((l, i) => [l.id, i]));
   vs.sort((a, b) => (kind === 'plan' || kind === 'ceiling' ? (lv.get(a.levelId!) ?? 0) - (lv.get(b.levelId!) ?? 0) : 0) || a.name.localeCompare(b.name, 'de', { numeric: true }));
   return vs.map((v) => ({ id: v.id, label: kind === 'sheet' ? `${v.sheetNo ?? ''} - ${v.name}` : v.name, icon: ic, viewId: v.id, draggable: true, menu: () => viewMenu(v) }));
@@ -96,6 +98,7 @@ function build(): Node[] {
   for (const [k, l, ic] of kinds) {
     const ch = viewNodes(k, ic);
     if (ch.length || k === 'plan') viewsGroup.children!.push({ id: 'k_' + k, label: l, children: ch });
+    if (k === 'section') { const dv = viewNodes('section', 'section', true); if (dv.length) viewsGroup.children!.push({ id: 'k_dev', label: 'Abwicklungen', children: dv }); }
   }
   nodes.push(viewsGroup);
   nodes.push({ id: 'k_legend', label: 'Legenden', children: viewNodes('legend', 'legend') });

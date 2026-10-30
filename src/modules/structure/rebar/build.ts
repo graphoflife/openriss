@@ -155,8 +155,12 @@ export function optsOf(el: Rebar): BuildOpts {
   };
 }
 
+/** Erweiterung: eigene Einpassung (z. B. Treppenbewehrung); null = nicht zuständig */
+export const refitHooks: ((doc: Doc, el: Rebar, patch: Partial<Rebar>) => Partial<Rebar> | null)[] = [];
+
 /** Satz neu in den Host einpassen (z. B. nach Änderung von Ø oder Deckung). Liefert Patch. */
 export function refit(doc: Doc, el: Rebar, patch: Partial<Rebar>): Partial<Rebar> {
+  for (const h of refitHooks) { const r = h(doc, el, patch); if (r) return r; }
   const fit = el.fit; const host = doc.get(el.hostId);
   if (!fit || !host) return patch;
   const o: BuildOpts = optsOf(el);

@@ -13,11 +13,24 @@
   },
   "dependencies": {
     "polygon-clipping": "0.15.7",
-    "three": "0.170.0"
+    "three": "0.170.0",
+    "esbuild": "0.21.5",
+    "fflate": "0.8.3"
   },
   "devDependencies": {
     "@types/three": "0.170.0",
     "typescript": "5.9.3",
     "vite": "5.4.21"
-  }
+  },
+  "bin": {
+    "openriss": "bin/openriss.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "docs",
+    "LICENSE",
+    "README.md",
+    "tsconfig.json"
+  ]
 }

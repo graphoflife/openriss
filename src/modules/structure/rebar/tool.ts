@@ -10,7 +10,8 @@ import type { View } from '../../../core/view';
 import { planRange } from '../../../views/viewBuilder';
 import type { DisplayList } from '../../../render/displayList';
 import { fmtNum } from '../../../core/units';
-import { DIAS, LAYOUT_LABELS, Layout, cleanRing, insetRing } from './math';
+import { LAYOUT_LABELS, Layout, cleanRing, insetRing } from './math';
+import { diasFor } from './norm';
 import { HostHit, hostAt, slabAt, planFrame, sectionFrame, vfOf } from './frame';
 import { BuildOpts, ShapeKind, buildFitted, buildSlab, buildDrawn, coverFor, SLAB_LAYERS, SlabLayer } from './build';
 import { Rebar, drawRebar, assignPos, rebarGeo, rebarLabel, DISPLAY_LABELS, Display } from './rebar';
@@ -77,7 +78,7 @@ export class RebarTool extends Tool {
     const set = <K extends keyof State>(k: K, rerender = false) => (v: any) => { (s as any)[k] = v; this.reset(false); if (rerender) app.emit('tool'); app.redrawOverlay(); };
     if (this.id === 'rebar') o.push({ kind: 'select', key: 'kind', label: 'Biegeform', value: s.kind, options: KINDS, onChange: set('kind', true) });
     if (s.kind === '00') o.push({ kind: 'check', key: 'draw', label: 'Punkt zu Punkt', value: s.draw, onChange: set('draw', true) });
-    o.push({ kind: 'select', key: 'dia', label: 'Ø', value: String(s.dia), options: DIAS.map((d) => [String(d), String(d)] as [string, string]), onChange: (v) => set('dia')(Number(v)) });
+    o.push({ kind: 'select', key: 'dia', label: 'Ø', value: String(s.dia), options: diasFor(app.doc, s.dia).map((d) => [String(d), String(d)] as [string, string]), onChange: (v) => set('dia')(Number(v)) });
     if (s.kind !== '51' && s.kind !== 'L') {
       o.push({ kind: 'select', key: 'hookA', label: 'Haken Anf.', value: String(s.hookA), options: HOOKS, onChange: (v) => set('hookA')(Number(v)) });
       o.push({ kind: 'select', key: 'hookB', label: 'Ende', value: String(s.hookB), options: HOOKS, onChange: (v) => set('hookB')(Number(v)) });

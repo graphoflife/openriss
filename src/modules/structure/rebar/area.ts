@@ -23,6 +23,7 @@ import { DIAS, kgPerM, cleanRing, insetRing } from './math';
 import { slabAt, slabOutline, sectionFrame, fView, Xf3, xfOfView, xfTranslate } from './frame';
 import { coverFor } from './build';
 import { maxPos, hostLabel } from './rebar';
+import { planOf, currentPlan, diasFor } from './norm';
 import { registerTagProvider } from './tag';
 import { HOST_CATS, solidBox, ensureRebarMaterial } from '../common';
 
@@ -240,7 +241,7 @@ export function xfArea(el: El, X: Xf3): Partial<El> {
 }
 
 // ------------------------------------------------------------ Eigenschaften
-const diaOpts = (): [string, string][] => DIAS.map((d) => [String(d), 'Ø ' + d]);
+const diaOpts = (doc: Doc = app.doc): [string, string][] => diasFor(doc).map((d) => [String(d), 'Ø ' + d]);
 function areaProps(): PropDef[] {
   const g = GROUPS; const p: PropDef[] = [];
   p.push({ key: 'angle', label: 'Hauptrichtung (Winkel)', group: g.constraints, type: 'angle', get: (e) => e.angle ?? 0, set: (_e, v) => ({ angle: v }) });
@@ -248,11 +249,11 @@ function areaProps(): PropDef[] {
   p.push({ key: 'host', label: 'Host', group: g.constraints, type: 'readonly', get: (e, doc) => hostLabel(doc, e.hostId) });
   for (const k of LAYER_ORDER) {
     const grp = 'Lage: ' + LAYER_LABELS[k];
-    const upd = (e: El, patch: Partial<AreaLayer>, doc: Doc) => ({ layers: (e.layers as AreaLayer[]).map((l) => (l.key === k ? { ...l, ...patch, pos: patch.on && !l.pos ? maxPos(doc) + 1 : patch.pos ?? l.pos } : l)) });
+    const upd = (e: El, patch: Partial<AreaLayer>, doc: Doc) => ({ layers: (e.layers as AreaLayer[]).map((l) => (l.key === k ? { ...l, ...patch, pos: patch.on && !l.pos ? maxPos(doc, planOf(e)) + 1 : patch.pos ?? l.pos } : l)) });
     const L = (e: El) => (e.layers as AreaLayer[]).find((l) => l.key === k)!;
     p.push(
       { key: k + 'on', label: 'Aktiv', group: grp, type: 'bool', get: (e) => !!L(e)?.on, set: (e, v, doc) => upd(e, { on: v }, doc) },
-      { key: k + 'dia', label: 'Stabdurchmesser Ø', group: grp, type: 'select', options: diaOpts(), get: (e) => String(L(e)?.dia ?? 10), set: (e, v, doc) => upd(e, { dia: Number(v) }, doc) },
+      { key: k + 'dia', label: 'Stabdurchmesser Ø', group: grp, type: 'select', options: (doc: Doc) => diaOpts(doc), get: (e) => String(L(e)?.dia ?? 10), set: (e, v, doc) => upd(e, { dia: Number(v) }, doc) },
       { key: k + 's', label: 'Abstand', group: grp, type: 'length', get: (e) => L(e)?.s ?? 150, set: (e, v, doc) => (v >= 30 ? upd(e, { s: v }, doc) : undefined) },
       { key: k + 'pos', label: 'Positionsnummer', group: grp, type: 'int', get: (e) => L(e)?.pos ?? 0, set: (e, v, doc) => (v > 0 ? upd(e, { pos: v }, doc) : undefined) },
     );
@@ -389,11 +390,12 @@ export function startAreaRebar(): void {
     if (!host) { app.status('Kein Bauteil (Decke, Bodenplatte, Fundament) unter dem Bereich gefunden.'); return; }
     app.doc.transaction('Flächenbewehrung', () => {
       ensureRebarMaterial(app.doc);
-      let pos = maxPos(app.doc);
+      const plan = currentPlan(app.doc);
+      let pos = maxPos(app.doc, plan);
       const lay = (key: LayerKey, on: boolean, dia: number, s: number): AreaLayer => ({ key, on, dia, s, pos: on ? ++pos : 0 });
       const u = areaState.layers.includes('u'), o = areaState.layers.includes('o');
       app.doc.add({
-        id: newId('ar'), cat: 'areaRebar', hostId: host.id, loops, angle: areaState.angle,
+        id: newId('ar'), cat: 'areaRebar', hostId: host.id, loops, angle: areaState.angle, plan: plan || undefined,
         layers: [lay('uH', u, areaState.diaH, areaState.sH), lay('uQ', u, areaState.diaQ, areaState.sQ), lay('oH', o, areaState.diaH, areaState.sH), lay('oQ', o, areaState.diaQ, areaState.sQ)],
       } as AreaRebar);
     });
@@ -419,7 +421,7 @@ export function startFabricArea(): void {
     const v = app.activeView();
     app.doc.transaction('Mattenbewehrung', () => {
       app.doc.add({
-        id: newId('fa'), cat: 'fabricArea', hostId: host?.id, levelId: v?.levelId, typeId: fabState.typeId, loops, angle: fabState.angle,
+        id: newId('fa'), cat: 'fabricArea', hostId: host?.id, levelId: v?.levelId, typeId: fabState.typeId, loops, angle: fabState.angle, plan: currentPlan(app.doc) || undefined,
         layer: fabState.layer, lapL: fabState.lapL, lapQ: fabState.lapQ,
       } as FabricArea);
     });
@@ -429,12 +431,12 @@ export function startFabricArea(): void {
 }
 
 // ------------------------------------------------------------ Stahlliste
-export interface AreaRow { pos: number; n: number; dia: number; lens: number[]; total: number; kg: number; label: string; hostId: Id }
+export interface AreaRow { pos: number; n: number; dia: number; lens: number[]; total: number; kg: number; label: string; hostId: Id; elId: Id }
 export function areaRows(doc: Doc, els?: AreaRebar[]): AreaRow[] {
   const out: AreaRow[] = [];
   for (const el of els ?? doc.all<AreaRebar>('areaRebar')) for (const l of areaGeo(doc, el).layers) {
     if (!l.n) continue;
-    out.push({ pos: l.pos ?? 0, n: l.n, dia: l.dia, lens: l.segs.map((s) => dist(s[0], s[1])), total: l.total, kg: (l.total / 1000) * kgPerM(l.dia), label: `${l.label} ${layerText({ key: l.key as LayerKey, on: true, dia: l.dia, s: l.s, pos: 0 })}`, hostId: el.hostId });
+    out.push({ pos: l.pos ?? 0, n: l.n, dia: l.dia, lens: l.segs.map((s) => dist(s[0], s[1])), total: l.total, kg: (l.total / 1000) * kgPerM(l.dia), label: `${l.label} ${layerText({ key: l.key as LayerKey, on: true, dia: l.dia, s: l.s, pos: 0 })}`, hostId: el.hostId, elId: el.id });
   }
   return out;
 }

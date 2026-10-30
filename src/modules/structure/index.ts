@@ -18,6 +18,11 @@ import { Rebar, xfRebar } from './rebar/rebar';
 import { refit } from './rebar/build';
 import { Xf3, xfOfView, xfTranslate } from './rebar/frame';
 import { HOST_CATS, REBAR_CATS, addTemplateTypes } from './common';
+import './ch';
+import './rebar/filter';
+import './rebar/layout';
+import './development';
+import './rebar/stair';
 
 // ------------------------------------------------------------ Symbole
 if (!ICONS.rebartag) registerIcon('rebartag', `<path d="M3 18 H11" stroke="#b03030" stroke-width="2.2"/><path d="M11 18 L15 9" stroke="currentColor"/><path d="M15 9 H22" stroke="currentColor"/><circle cx="18.5" cy="5.5" r="3.2" fill="#fff" stroke="currentColor"/><text x="18.5" y="7.4" font-size="5" text-anchor="middle" fill="currentColor">3</text>`);

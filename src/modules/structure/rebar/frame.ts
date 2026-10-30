@@ -111,7 +111,7 @@ export function slabAt(doc: Doc, p: V2, cutZ: number, only?: Id | null): HostHit
   let best: HostHit | null = null;
   for (const el of hostCandidates(doc)) {
     if (only && el.id !== only) continue;
-    if (el.cat === 'wall' || el.cat === 'column') continue;
+    if (el.cat === 'wall' || el.cat === 'column' || el.cat === 'stair') continue;
     const b = solidBox(doc, el); if (!b) continue;
     if (b.min.z > cutZ + 1) continue;
     if (p.x < b.min.x || p.x > b.max.x || p.y < b.min.y || p.y > b.max.y) continue;

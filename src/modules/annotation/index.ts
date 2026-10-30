@@ -1,8 +1,11 @@
 // Modul: annotation – Bemaßungen, Höhenkoten, Text, Beschriftungen, Raumstempel, Füllbereiche,
 // Dämmung, Detailbauteile, Revisionswolken und Symbole. Registriert Kategorien, Befehle und Hooks.
 import { app } from '../../app';
-import type { El } from '../../core/doc';
-import { registerCommand, registerContextPanel, onHook } from '../../core/registry';
+import type { Doc, El } from '../../core/doc';
+import { registerCommand, registerContextPanel, registerPanel, onHook } from '../../core/registry';
+import { projectInfo, ProjectInfo } from '../../core/view';
+import { parseNum } from '../../core/units';
+import { registerProjectInfoField, toast } from '../../ui/dialogs';
 import { startTool, registerSimilar } from '../../ui/commands';
 import type { Tool, ToolEvent } from '../../tools/tool';
 import './icons';
@@ -10,6 +13,8 @@ import './types';
 import { ensureTypes } from './common';
 import { DimTool, AngularDimTool, ArcDimTool, dimTextDialog, Dim } from './dims';
 import { SpotTool } from './spots';
+import { chSpotTypes } from './types';
+import { applyLocale, Locale } from './locale';
 import { TextTool, AddLeaderTool, editTextEl, TextEl } from './text';
 import { TagTool, tagAllDialog, editTagValue, Tag } from './tags';
 import { startRegionTool, startCloudTool, editSketch } from './regions';
@@ -28,6 +33,16 @@ toolCmd('dimRadial', 'Radius', 'dimradial', [], 'Radiusbemaßung eines Bogens od
 toolCmd('dimArc', 'Bogenlänge', 'dimarc', [], 'Bogenlängenbemaßung.', ['dimension'], () => new ArcDimTool('arc'));
 toolCmd('spotElevation', 'Höhenkote', 'spot', ['EL'], 'Höhenkote: im Schnitt/in der Ansicht die Höhe des gewählten Punktes, im Grundriss die Ebenenhöhe (+ Versatz).', ['spot'], () => new SpotTool('elev'));
 toolCmd('spotCoordinate', 'Koordinate', 'spotcoord', [], 'Punktkoordinate (Ost/Nord) im Grundriss.', ['spot'], () => new SpotTool('coord'));
+registerCommand({
+  id: 'spotSlab', label: 'Koten- Kästchen', icon: 'spotbox',
+  tip: 'Koten-Kästchen im Grundriss: OK/UK/Dicke der Decke bzw. Platte am gewählten Punkt (Tab wechselt zwischen übereinanderliegenden Decken).',
+  run: () => {
+    ensureTypes('spot');
+    if (!app.doc.get('spt_box')) app.doc.transaction('Kotentypen laden', () => chSpotTypes(app.doc));
+    startTool(new SpotTool('slab'), 'spotSlab');
+  },
+});
+registerPanel('Beschriften', 'Bemaßung', ['spotSlab'], 10);
 toolCmd('text', 'Text', 'text', ['TX'], 'Textnotiz: Klicken (oder Rechteck aufziehen für Umbruchbreite) und Text eingeben. Doppelklick bearbeitet vorhandenen Text.', ['text'], () => new TextTool());
 toolCmd('tagByCat', 'Nach Kategorie', 'tag', ['TG'], 'Beschriftung nach Kategorie: Türen (Kennzeichen im Kreis), Fenster (Typ im Rechteck), Wände …', ['tag', 'roomtag'], () => new TagTool(false));
 registerCommand({ id: 'tagAll', label: 'Alle beschriften', icon: 'tagall', tip: 'Alle nicht beschrifteten Elemente der aktiven Ansicht beschriften.', run: tagAllDialog });
@@ -60,3 +75,23 @@ onHook('dblclick', (el: El, e: ToolEvent) => {
     case 'tag': case 'roomtag': editTagValue(el as Tag); break;
   }
 });
+
+// ------------------------------------------------------------ Projektinformationen: Landesvorlage, Höhenbezug
+registerProjectInfoField({
+  key: 'locale', label: 'Landesvorlage', options: [['DE', 'Deutschland (DIN)'], ['CH', 'Schweiz (SIA)']],
+  get: (pi) => pi.locale ?? 'DE', set: (pi, v) => { pi.locale = v === 'CH' ? 'CH' : 'DE'; },
+});
+registerProjectInfoField({
+  key: 'elev00', label: 'Höhenbezug ±0.00 = … m ü. M.', placeholder: 'z. B. 452.30',
+  get: (pi) => (pi.elev00 === undefined ? '' : String(pi.elev00)),
+  set: (pi, v) => { const n = v.trim() ? parseNum(v) : null; pi.elev00 = n === null ? undefined : n; },
+});
+// Landesvorlage geändert → Typen ergänzen und vorhandene Standard-Bemaßungen/-Koten umstellen
+onHook('projectInfo', (doc: Doc, before: ProjectInfo) => {
+  const loc: Locale = projectInfo(doc)?.locale === 'CH' ? 'CH' : 'DE';
+  if ((before?.locale ?? 'DE') === loc) return;
+  const r = applyLocale(doc, loc, { retype: true });
+  if (typeof document !== 'undefined') toast(`Landesvorlage ${loc === 'CH' ? 'Schweiz' : 'Deutschland'}: ${r.dims} Bemaßungen und ${r.spots} Koten umgestellt.`);
+});
+
+export { applyLocale } from './locale';

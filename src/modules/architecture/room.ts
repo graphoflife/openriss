@@ -78,7 +78,7 @@ export function regionAt(doc: Doc, levelId: Id, p: V2): Region | null {
 }
 
 // ------------------------------------------------------------ Raumdaten
-export interface RoomInfo { poly: Poly | null; area: number; perimeter: number; z0: number; z1: number; status: 'ok' | 'open' | 'none' }
+export interface RoomInfo { poly: Poly | null; area: number; perimeter: number; z0: number; z1: number; status: 'ok' | 'open' | 'none' | 'shared' }
 export function roomZ(doc: Doc, r: El): [number, number] {
   const z0 = levelElev(doc, r.levelId) + (r.baseOffset ?? 0);
   const top = r.topLevelId && doc.get(r.topLevelId) ? levelElev(doc, r.topLevelId) : levelElev(doc, r.levelId);
@@ -92,11 +92,17 @@ export function roomInfo(doc: Doc, r: El): RoomInfo {
     const reg = regionAt(doc, r.levelId, r.pt);
     if (!reg) return { poly: null, area: 0, perimeter: 0, z0, z1, status: 'none' };
     if (reg.open) return { poly: null, area: 0, perimeter: 0, z0, z1, status: 'open' };
-    return { poly: reg.poly, area: polyArea(reg.poly), perimeter: reg.poly.reduce((s, q) => s + perimeter(q), 0), z0, z1, status: 'ok' };
+    // weitere Räume im selben Bereich → Raumtrennung fehlt (z.B. offenes Wohnen/Essen/Küche)
+    const shared = doc.all<Room>('room').some((o) => o.id !== r.id && o.levelId === r.levelId && o.pt && pointInPoly(o.pt, reg.poly));
+    return { poly: reg.poly, area: polyArea(reg.poly), perimeter: reg.poly.reduce((s, q) => s + perimeter(q), 0), z0, z1, status: shared ? 'shared' : 'ok' };
   };
   return r.id ? cached(doc, 'archRoomInfo', r.id, calc) : calc();
 }
-export const roomText = (doc: Doc, r: El): string => `${r.name ?? 'Raum'}\n${r.number ?? ''}\n${fmtArea(roomInfo(doc, r).area)}`;
+export const roomText = (doc: Doc, r: El): string => {
+  const ri = roomInfo(doc, r);
+  const hint = ri.status === 'shared' ? '\n⚠ Raumtrennung fehlt' : ri.status === 'open' ? '\n⚠ nicht umschlossen' : '';
+  return `${r.name ?? 'Raum'}\n${r.number ?? ''}\n${fmtArea(ri.area)}${hint}`;
+};
 
 export function nextRoomNumber(doc: Doc): string {
   let max = 0;
@@ -104,7 +110,7 @@ export function nextRoomNumber(doc: Doc): string {
   return String(max + 1);
 }
 
-const STATUS: Record<RoomInfo['status'], string> = { ok: 'Umschlossen', open: 'Nicht umschlossen', none: 'Nicht platziert (kein Bereich)' };
+const STATUS: Record<RoomInfo['status'], string> = { ok: 'Umschlossen', open: 'Nicht umschlossen', none: 'Nicht platziert (kein Bereich)', shared: 'Mehrere Räume im selben Bereich – Raumtrennung setzen' };
 
 function roomProps(): PropDef[] {
   const g = GROUPS;

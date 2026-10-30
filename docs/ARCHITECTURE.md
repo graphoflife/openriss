@@ -68,7 +68,8 @@ Siehe `CategoryDef` in `core/registry.ts`. Wichtigste Felder:
 | `props(el, doc)` | Instanzeigenschaften (`PropDef`: key, label, group (GROUPS), type, get, set → Patch) |
 | `scheduleFields()` | zusätzliche Felder für Bauteillisten |
 | `tagText`, `tagPoint` | für Beschriftungen nach Kategorie |
-| `hostOpening(el, doc)` | Öffnung in der Host-Wand (`u0,u1` entlang Wandachse, `z0,z1` absolut) |
+| `hostOpening(el, doc)` | Öffnung in der Host-Wand (`u0,u1` entlang Wandachse, `z0,z1` absolut, optional `profile` für freie Formen); im IFC ein `IfcOpeningElement`, Elemente mit Körper füllen es (`IfcRelFillsElement`) |
+| `ifc(el, doc)` | IFC-Zuordnung: `{ entity, predefined?, name?, psets? }` (z.B. `IfcPipeSegment`/`RIGIDSEGMENT`); ohne Hook gilt die Standardzuordnung je Kategorie |
 | `visibleIn(el, doc, view)` | zusätzliche Sichtbarkeitsregel |
 
 Hilfen für Körper: `prism(ring, z0, z1, holes)`, `box3(o, u, v, w)`, `extrudeProfile(...)` in `views/sectionEngine.ts`.
@@ -117,9 +118,11 @@ Befehl mit der vereinbarten ID registrieren; nicht registrierte IDs werden ausge
 | `createInstanceOfType` | type | Projektbrowser „Instanz erstellen“ |
 | `editWallLayers` | type | Wandschichten-Dialog |
 | `beforePaint` | vp, ctx | vor dem Zeichnen (z. B. Bildunterlage) |
+| `projectInfo` | doc, vorher | Projektinformationen geändert (in der Transaktion; z. B. Landesvorlage, Einheiten) |
 
 Weitere Erweiterungspunkte: `registerViewport({ kinds, create })` (eigene Ansichtsarten, z. B. 3D/Bauteilliste),
-`registerDLBuilder(kind, fn)` (Display-Liste für z. B. Pläne), `registerBrowserSection(...)`,
+`registerDLBuilder(kind, fn)` (Display-Liste für z. B. Pläne), `registerScheduleKind(kind, …)` (Sonderliste als Bauteilliste mit
+`View.data.kind`, z. B. Eisenliste: eigene Display-Liste/HTML/CSV), `registerBrowserSection(...)`,
 `registerWallTopProvider(fn)` (Wand oben an Dach fixieren).
 
 ## Fachmodule (`src/modules/`)
@@ -128,9 +131,9 @@ Weitere Erweiterungspunkte: `registerViewport({ kinds, create })` (eigene Ansich
 |---|---|
 | `annotation` | Bemaßungen (ausgerichtet, linear, Winkel, Radius, Bogenlänge), Höhenkoten, Text, Beschriftungen, Raumstempel, Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Symbole |
 | `architecture` | Geschossdecken, Decken, Dächer (inkl. Wände oben fixieren), Treppen, Geländer, Bauteile/Möbel, Räume, Raumtrennung, Wand-/Schacht-/Deckenöffnungen |
-| `structure` | Stützen, Träger, Fundamente, Stabbewehrung, Bügel, Flächen- und Mattenbewehrung, Betondeckung, Stahlliste |
+| `structure` | Stützen, Träger, Fundamente, Stabbewehrung, Bügel, Flächen- und Mattenbewehrung, Betondeckung, Stahlliste; Schweiz: Bewehrungsnorm DIN/SIA, SSHV-Formkatalog (`rebar/sshv.ts`), Positionen je Bewehrungsplan, Eisenliste nach SSHV, ABS-Export BVBS 3.1 (`steel.ts`, `eisenliste.ts`) |
 | `output` | Pläne mit Plankopf, Ansichtsfenster, Bauteillisten, Drucken/PDF, SVG/PNG/DXF-Export, DXF-Import, Bilder, Detailausschnitte |
-| `view3d` | 3D-Ansicht (three.js), ViewCube, Schnittbereich, IFC4-, glTF- und OBJ-Export |
+| `view3d` | 3D-Ansicht (three.js), ViewCube, Schnittbereich, glTF-/OBJ-Export, IFC4-Export (`ifc.ts`: Rohbauteile als Extrusion mit Öffnungen und Schichtaufbau, `ifcRebar.ts`: Bewehrung stabweise, `ifcCh.ts`: Schweizer Betonangaben) |
 | `sample` | Beispielprojekt |
 
 Module kommunizieren ausschließlich über die Registry, Hooks und gemeinsame Elementfelder.

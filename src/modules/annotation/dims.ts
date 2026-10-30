@@ -19,7 +19,8 @@ import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { modal } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
 import { drawTick, TickKind, readable, tint, PREV_COL, ANNO_KINDS, fontFamily, TICK_OPTIONS, FONTS, myPlacement } from './common';
-import { DIM_DEFAULT, DIM_ARROW } from './types';
+import { DIM_ARROW, defaultDimType } from './types';
+import { fmtDimLen, DimUnit, DecSep, SupMode } from './numfmt';
 
 // ------------------------------------------------------------ Datenmodell
 export interface ArcG { c: V2; r: number; a0: number; a1: number }
@@ -136,6 +137,8 @@ const repPt = (g: G): V2 => (g.k === 'seg' ? mid(g.a, g.b) : g.k === 'pt' ? g.p 
 interface DimStyle {
   tick: TickKind; tickSize: number; tickW: number; lineW: number; color: string; size: number; font: string;
   textGap: number; wGap: number; wExt: number; dimExt: number; unit: string; dec: number; opaque: boolean; bold: boolean;
+  /** Dezimaltrennzeichen und hochgestellte mm-Stelle (fehlt = Projekteinstellung, wie bisher) */
+  sep: DecSep; sup?: SupMode;
 }
 function dimStyle(doc: Doc, el: El): DimStyle {
   const t: any = doc.get(el.typeId) ?? {};
@@ -144,10 +147,16 @@ function dimStyle(doc: Doc, el: El): DimStyle {
     tick: t.tick ?? 'slash', tickSize: n(t.tickSize, 2.5), tickW: n(t.tickW, 5), lineW: n(t.lineW, 1), color: t.color || '#000000',
     size: n(t.size, 2.5), font: t.font ?? 'Arial', textGap: n(t.textGap, 0.7), wGap: n(t.wGap, 1.5), wExt: n(t.wExt, 1.5),
     dimExt: n(t.dimExt, 1.5), unit: t.unit ?? '', dec: n(t.dec, 2), opaque: !!t.opaque, bold: !!t.bold,
+    sep: t.sep === '.' ? '.' : ',', sup: t.sup || undefined,
   };
 }
 const isArrow = (k: TickKind) => k === 'arrow' || k === 'arrowOpen';
-function fmtVal(st: DimStyle, v: number): string { return st.unit ? fmtLen(v, st.unit as LengthUnit, st.dec) : fmtLen(v); }
+function fmtVal(st: DimStyle, v: number): string {
+  // neue Formatierung (Typ mit Hochstellung oder Einheit «CH»), sonst wie bisher über die Projekteinheiten
+  if (st.sup || st.unit === 'ch') return fmtDimLen(v, st.unit as DimUnit, st.dec, st.sep, st.sup ?? 'none');
+  const s = st.unit ? fmtLen(v, st.unit as LengthUnit, st.dec) : fmtLen(v);
+  return st.sep === '.' ? s.replace(',', '.') : s;
+}
 function defPrefix(el: Dim): string { return el.prefix ?? (el.kind === 'radial' ? 'R ' : el.kind === 'arc' ? '⌒ ' : ''); }
 function finalText(el: Dim, i: number, val: string): string {
   const o = el.over?.[i];
@@ -420,7 +429,9 @@ function dimCenter(el: Dim, doc: Doc, view: View): V2 | null {
   return el.pt ?? null;
 }
 
-const UNIT_OPTS: [string, string][] = [['', 'Projekteinstellung'], ['mm', 'Millimeter'], ['cm', 'Zentimeter'], ['m', 'Meter']];
+const UNIT_OPTS: [string, string][] = [['', 'Projekteinstellung'], ['mm', 'Millimeter'], ['cm', 'Zentimeter'], ['m', 'Meter'], ['ch', 'Schweiz: < 1 m in cm, sonst m']];
+const SEP_OPTS: [string, string][] = [[',', 'Komma (2,40)'], ['.', 'Punkt (2.40)']];
+const SUP_OPTS: [string, string][] = [['', 'Projekteinstellung'], ['none', 'Keine'], ['5', 'Nur 5 (auf 5 mm gerundet: 1.82⁵)'], ['all', 'Jede Ziffer (1.82³)']];
 
 registerCategory({
   cat: 'dimension', label: 'Bemaßung', plural: 'Bemaßungen', annotation: true, hasTypes: true, planOrder: 90,
@@ -476,6 +487,8 @@ function dimTypeProps(): PropDef[] {
     { key: 'opaque', label: 'Texthintergrund undurchsichtig', group: g.text, type: 'bool', get: (t) => !!t.opaque, set: (_t, v) => ({ opaque: v }) },
     { key: 'unit', label: 'Einheit', group: g.other, type: 'select', options: UNIT_OPTS, get: (t) => t.unit ?? '', set: (_t, v) => ({ unit: v }) },
     { key: 'dec', label: 'Nachkommastellen', group: g.other, type: 'int', get: (t) => t.dec ?? 2, set: (_t, v) => ({ dec: clamp(Math.round(v), 0, 4) }) },
+    { key: 'sep', label: 'Dezimaltrennzeichen', group: g.other, type: 'select', options: SEP_OPTS, get: (t) => (t.sep === '.' ? '.' : ','), set: (_t, v) => ({ sep: v }) },
+    { key: 'sup', label: 'Hochgestellte mm-Stelle', group: g.other, type: 'select', options: SUP_OPTS, get: (t) => t.sup ?? '', set: (_t, v) => ({ sup: v || undefined }) },
   ];
 }
 
@@ -667,7 +680,7 @@ export class DimTool extends Tool {
     this.id = aligned ? 'dimAligned' : 'dimLinear';
     this.label = aligned ? 'Ausgerichtete Bemaßung' : 'Lineare Bemaßung';
   }
-  activate(): void { this.placement = myPlacement('dimLinear', 'dimension', DIM_DEFAULT); }
+  activate(): void { this.placement = myPlacement('dimLinear', 'dimension', defaultDimType(app.doc)); }
   private whole(): boolean { return this.aligned && dimOpts.pick === 'walls' && !!this.view && isPlanLike(this.view); }
   prompt(): string {
     if (this.whole()) return this.refs.length ? 'Weitere parallele Wand wählen oder in freien Bereich klicken, um die Maßkette zu platzieren.' : 'Wand wählen (Maßkette mit Enden, Öffnungen und schneidenden Wänden).';

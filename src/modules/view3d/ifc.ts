@@ -1,128 +1,81 @@
-// IFC4-Export (STEP-Datei nach ISO 10303-21): Projekt (mm), Grundstück, Gebäude, ein Geschoss je
-// Ebene, Bauteile nach Kategorie (IfcWall, IfcSlab, IfcDoor …) mit Geometrie als IfcFacetedBrep
-// aus den Solids, Farben (IfcStyledItem), Materialzuordnung und Eigenschaftensatz „Pset_OpenRiss“.
+// IFC4-Export (STEP-Datei nach ISO 10303-21): Projekt (mm), Grundstück, Gebäude, ein Geschoss je Ebene.
+// Rohbauteile (Wand, Decke, Fundament, Stütze, Träger) ungeschnitten als IfcExtrudedAreaSolid mit Öffnungen
+// (IfcOpeningElement/IfcRelVoidsElement, Türen/Fenster über IfcRelFillsElement) und Schichtaufbau
+// (IfcMaterialLayerSetUsage); übrige Bauteile als IfcFacetedBrep aus den Solids. Bewehrung stabweise
+// (ifcRebar.ts), Schweizer Betonangaben (ifcCh.ts), Zuordnung je Kategorie über CategoryDef.ifc.
 import type { Doc, El, Id } from '../../core/doc';
-import { allCats, catDef } from '../../core/registry';
-import type { Solid } from '../../core/registry';
+import { allCats, catDef, onHook } from '../../core/registry';
 import { levels, projectInfo, Level, Material, TypeEl } from '../../core/view';
-import type { V3 } from '../../core/geom';
-import { solidsOf, faceNormal } from '../../views/sectionEngine';
-import { cleanRing, solidLook, catFamily } from './meshes';
+import { solidsOf } from '../../views/sectionEngine';
+import { coverFor } from '../structure/rebar/build';
+import { catFamily, solidLook } from './meshes';
+import { IfcOut, Frame, worldFrame, R, S, SS, E, ref, refs, PropVal } from './ifcStep';
+import { bodyPlan, ifcHook, isPureOpening, IfcMapping, BodyPlan } from './ifcBody';
+import { writeRebar, rebarPlan, Prod, StoreyRec } from './ifcRebar';
+import { concreteData, concreteLabel, installConcreteTypeProps } from './ifcCh';
 
-// ------------------------------------------------------------ STEP-Grundlagen
-/** Zeichenkette für STEP: Apostroph/Backslash maskieren, Nicht-ASCII als \X2\…\X0\ */
-export function stepString(s: string): string {
-  let out = '';
-  let i = 0;
-  while (i < s.length) {
-    const c = s.charCodeAt(i);
-    if (c >= 32 && c <= 126) { out += c === 39 ? "''" : c === 92 ? '\\\\' : s[i]; i++; continue; }
-    let hex = '';
-    while (i < s.length) {
-      const d = s.charCodeAt(i);
-      if (d >= 32 && d <= 126) break;
-      hex += d.toString(16).toUpperCase().padStart(4, '0');
-      i++;
-    }
-    out += '\\X2\\' + hex + '\\X0\\';
-  }
-  return out;
-}
-const S = (s: string | null | undefined): string => (s === null || s === undefined || s === '' ? '$' : `'${stepString(String(s))}'`);
-const SS = (s: string | null | undefined): string => `'${stepString(String(s ?? ''))}'`;
-/** REAL mit Dezimalpunkt */
-export function stepReal(v: number, dec = 3): string {
-  if (!isFinite(v)) v = 0;
-  const f = Math.pow(10, dec);
-  let r = Math.round(v * f) / f;
-  if (Object.is(r, -0)) r = 0;
-  if (Math.abs(r) >= 1e15) return r.toExponential(8).toUpperCase().replace('E+', 'E');
-  const s = String(r);
-  return s.includes('.') || s.includes('e') ? s.toUpperCase() : s + '.';
-}
-const R = stepReal;
-const ref = (n: number) => '#' + n;
-const refs = (ns: number[]) => '(' + ns.map(ref).join(',') + ')';
+export { stepString, stepReal, compressGuid } from './ifcStep';
 
-const B64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
-/** 128 Bit → komprimierte IFC-GUID (22 Zeichen) */
-export function compressGuid(b: Uint8Array): string {
-  const enc = (n: number, digits: number) => { let s = ''; for (let i = 0; i < digits; i++) { s = B64[n % 64] + s; n = Math.floor(n / 64); } return s; };
-  let s = enc(b[0], 2);
-  for (let i = 1; i < 16; i += 3) s += enc((b[i] << 16) | (b[i + 1] << 8) | b[i + 2], 4);
-  return s;
-}
-/** Deterministischer 128-Bit-Hash (cyrb128) → stabile GUIDs bei wiederholtem Export */
-function hash128(str: string): Uint8Array {
-  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
-  for (let i = 0; i < str.length; i++) {
-    const k = str.charCodeAt(i);
-    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
-    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
-    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
-    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
-  }
-  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
-  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
-  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
-  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
-  h1 ^= h2 ^ h3 ^ h4; h2 ^= h1; h3 ^= h1; h4 ^= h1;
-  const out = new Uint8Array(16);
-  [h1, h2, h3, h4].forEach((h, i) => { const u = h >>> 0; out[i * 4] = u >>> 24; out[i * 4 + 1] = (u >>> 16) & 255; out[i * 4 + 2] = (u >>> 8) & 255; out[i * 4 + 3] = u & 255; });
-  out[6] = (out[6] & 0x0f) | 0x40; out[8] = (out[8] & 0x3f) | 0x80; // UUID v4-Kennung
-  return out;
-}
-
-class StepWriter {
-  lines: string[] = [];
-  private n = 0;
-  add(s: string): number { this.lines.push(`#${++this.n}=${s};`); return this.n; }
-}
+// Betonangaben als Typ-Eigenschaften anbieten (jetzt registrierte Kategorien; nach dem Start alle übrigen)
+installConcreteTypeProps();
+onHook('started', installConcreteTypeProps);
 
 // ------------------------------------------------------------ Zuordnung Kategorie → IFC-Klasse
-interface IfcClass { ent: string; tail: string; pset?: string }
+/** nicht als eigenes Bauteil exportiert (Öffnungen/Schächte erscheinen als IfcOpeningElement, Bewehrung stabweise) */
+const SKIP_CATS = new Set(['view', 'type', 'material', 'project', 'level', 'grid', 'refplane', 'line', 'opening', 'shaft', 'area', 'rebar', 'areaRebar', 'fabricArea', 'rebarset']);
 
-const SKIP_CATS = new Set(['view', 'type', 'material', 'project', 'level', 'grid', 'refplane', 'line', 'opening', 'shaft', 'area']);
-const REBAR_CATS = new Set(['rebar', 'stirrup', 'arearebar', 'pathrebar', 'rebarset']);
-
+interface IfcClass { ent: string; pt: string; pset?: string }
 function num(v: any): number | null { const n = typeof v === 'string' ? parseFloat(v) : v; return typeof n === 'number' && isFinite(n) && n > 0 ? n : null; }
 
-function ifcClass(doc: Doc, el: El): IfcClass {
-  const c = el.cat;
-  const t = doc.get<TypeEl>(el.typeId) as any;
-  const fam = catFamily(c);
-  if (c === 'wall') return { ent: 'IFCWALL', tail: '.NOTDEFINED.', pset: 'Pset_WallCommon' };
-  if (c === 'door' || c === 'window') {
-    const h = num(el.height ?? t?.height), w = num(el.width ?? t?.width);
-    const dims = `${h ? R(h) : '$'},${w ? R(w) : '$'}`;
-    return c === 'door'
-      ? { ent: 'IFCDOOR', tail: `${dims},.DOOR.,.NOTDEFINED.,$`, pset: 'Pset_DoorCommon' }
-      : { ent: 'IFCWINDOW', tail: `${dims},.WINDOW.,.NOTDEFINED.,$`, pset: 'Pset_WindowCommon' };
-  }
-  if (fam === 'floor') return { ent: 'IFCSLAB', tail: '.FLOOR.', pset: 'Pset_SlabCommon' };
-  if (fam === 'roof') return { ent: 'IFCROOF', tail: '.NOTDEFINED.', pset: 'Pset_RoofCommon' };
-  if (c === 'ceiling') return { ent: 'IFCCOVERING', tail: '.CEILING.', pset: 'Pset_CoveringCommon' };
-  if (fam === 'column') return { ent: 'IFCCOLUMN', tail: '.COLUMN.', pset: 'Pset_ColumnCommon' };
-  if (fam === 'beam') return { ent: 'IFCBEAM', tail: '.BEAM.', pset: 'Pset_BeamCommon' };
-  if (fam === 'stair') return { ent: 'IFCSTAIR', tail: '.NOTDEFINED.', pset: 'Pset_StairCommon' };
-  if (fam === 'railing') return { ent: 'IFCRAILING', tail: '.NOTDEFINED.', pset: 'Pset_RailingCommon' };
-  if (c.startsWith('ramp')) return { ent: 'IFCRAMP', tail: '.NOTDEFINED.', pset: 'Pset_RampCommon' };
-  if (c.startsWith('curtain')) return { ent: 'IFCCURTAINWALL', tail: '.NOTDEFINED.', pset: 'Pset_CurtainWallCommon' };
-  if (c.startsWith('topo')) return { ent: 'IFCGEOGRAPHICELEMENT', tail: '.TERRAIN.' };
-  if (c === 'furniture') return { ent: 'IFCFURNITURE', tail: '.NOTDEFINED.' };
-  if (fam === 'foundation') {
-    const k = (c + ' ' + (el.kind ?? '') + ' ' + (t?.kind ?? '')).toLowerCase();
-    const pt = /strip|streifen|wall/.test(k) ? '.STRIP_FOOTING.' : /isol|pad|einzel|single/.test(k) ? '.PAD_FOOTING.' : '.NOTDEFINED.';
-    return { ent: 'IFCFOOTING', tail: pt, pset: 'Pset_FootingCommon' };
-  }
-  if (fam === 'rebar' || REBAR_CATS.has(c)) {
-    const d = num(el.diameter ?? el.dia ?? t?.diameter ?? t?.dia);
-    return { ent: 'IFCREINFORCINGBAR', tail: `$,${d ? R(d) : '$'},$,$,.NOTDEFINED.,$` };
-  }
-  return { ent: 'IFCBUILDINGELEMENTPROXY', tail: '.NOTDEFINED.', pset: 'Pset_BuildingElementProxyCommon' };
+function ifcClass(el: El): IfcClass {
+  const c = el.cat, fam = catFamily(c);
+  if (c === 'wall') return { ent: 'IFCWALL', pt: '.NOTDEFINED.', pset: 'Pset_WallCommon' };
+  if (c === 'door') return { ent: 'IFCDOOR', pt: '.DOOR.', pset: 'Pset_DoorCommon' };
+  if (c === 'window') return { ent: 'IFCWINDOW', pt: '.WINDOW.', pset: 'Pset_WindowCommon' };
+  if (c === 'foundationSlab') return { ent: 'IFCSLAB', pt: '.BASESLAB.', pset: 'Pset_SlabCommon' };
+  if (fam === 'floor') return { ent: 'IFCSLAB', pt: '.FLOOR.', pset: 'Pset_SlabCommon' };
+  if (fam === 'roof') return { ent: 'IFCROOF', pt: '.NOTDEFINED.', pset: 'Pset_RoofCommon' };
+  if (c === 'ceiling') return { ent: 'IFCCOVERING', pt: '.CEILING.', pset: 'Pset_CoveringCommon' };
+  if (fam === 'column') return { ent: 'IFCCOLUMN', pt: '.COLUMN.', pset: 'Pset_ColumnCommon' };
+  if (fam === 'beam') return { ent: 'IFCBEAM', pt: '.BEAM.', pset: 'Pset_BeamCommon' };
+  if (fam === 'stair') return { ent: 'IFCSTAIR', pt: '.NOTDEFINED.', pset: 'Pset_StairCommon' };
+  if (fam === 'railing') return { ent: 'IFCRAILING', pt: '.NOTDEFINED.', pset: 'Pset_RailingCommon' };
+  if (c.startsWith('ramp')) return { ent: 'IFCRAMP', pt: '.NOTDEFINED.', pset: 'Pset_RampCommon' };
+  if (c.startsWith('curtain')) return { ent: 'IFCCURTAINWALL', pt: '.NOTDEFINED.', pset: 'Pset_CurtainWallCommon' };
+  if (c.startsWith('topo')) return { ent: 'IFCGEOGRAPHICELEMENT', pt: '.TERRAIN.' };
+  if (c === 'furniture') return { ent: 'IFCFURNITURE', pt: '.NOTDEFINED.' };
+  if (fam === 'foundation') return { ent: 'IFCFOOTING', pt: /wall|strip/i.test(c) ? '.STRIP_FOOTING.' : '.PAD_FOOTING.', pset: 'Pset_FootingCommon' };
+  return { ent: 'IFCBUILDINGELEMENTPROXY', pt: '.NOTDEFINED.', pset: 'Pset_BuildingElementProxyCommon' };
 }
+/** Common-Pset zur Entität (für Hook-Entitäten) */
+const COMMON_PSET: Record<string, string> = {
+  IFCWALL: 'Pset_WallCommon', IFCSLAB: 'Pset_SlabCommon', IFCFOOTING: 'Pset_FootingCommon', IFCCOLUMN: 'Pset_ColumnCommon', IFCBEAM: 'Pset_BeamCommon',
+  IFCDOOR: 'Pset_DoorCommon', IFCWINDOW: 'Pset_WindowCommon', IFCBUILDINGELEMENTPROXY: 'Pset_BuildingElementProxyCommon', IFCMEMBER: 'Pset_MemberCommon', IFCPLATE: 'Pset_PlateCommon',
+};
+/** Entitäten ohne PredefinedType */
+const NO_PT = new Set(['IFCFLOWSEGMENT', 'IFCFLOWTERMINAL', 'IFCFLOWFITTING', 'IFCFLOWCONTROLLER', 'IFCFLOWMOVINGDEVICE', 'IFCFLOWSTORAGEDEVICE', 'IFCFLOWTREATMENTDEVICE',
+  'IFCENERGYCONVERSIONDEVICE', 'IFCDISTRIBUTIONELEMENT', 'IFCDISTRIBUTIONFLOWELEMENT', 'IFCDISTRIBUTIONCONTROLELEMENT', 'IFCCIVILELEMENT', 'IFCVIRTUALELEMENT', 'IFCFURNISHINGELEMENT', 'IFCELEMENTCOMPONENT']);
+/** Zusatzattribute nach Tag: [Anzahl, Index des PredefinedType] */
+const TAIL: Record<string, [number, number]> = {
+  IFCDOOR: [5, 2], IFCWINDOW: [5, 2], IFCMECHANICALFASTENER: [3, 2], IFCELEMENTASSEMBLY: [2, 1], IFCSTAIRFLIGHT: [5, 4], IFCREINFORCINGMESH: [10, 9],
+  IFCREINFORCINGBAR: [6, 4], IFCTENDON: [9, 1], IFCTENDONANCHOR: [2, 1],
+};
+function tailFor(ent: string, pt: string, el: El, doc: Doc): string {
+  if (NO_PT.has(ent)) return '';
+  const spec = TAIL[ent];
+  if (!spec) return ',' + pt;
+  const a = new Array(spec[0]).fill('$');
+  a[spec[1]] = pt;
+  if (ent === 'IFCDOOR' || ent === 'IFCWINDOW') {
+    const t = doc.get<TypeEl>(el.typeId) as any;
+    const h = num(el.height ?? t?.height), w = num(el.width ?? t?.width);
+    a[0] = h ? R(h) : '$'; a[1] = w ? R(w) : '$'; a[3] = '.NOTDEFINED.';
+  }
+  return ',' + a.join(',');
+}
+const entName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-/** Elemente, die exportiert werden (Modellelemente mit Geometrie; Räume immer) */
+/** Elemente, die als Bauteil exportiert werden (Modellelemente mit Geometrie; Räume immer) */
 export function ifcElements(doc: Doc): El[] {
   const out: El[] = [];
   for (const def of allCats()) {
@@ -133,70 +86,67 @@ export function ifcElements(doc: Doc): El[] {
 }
 
 // ------------------------------------------------------------ Export
-export interface IfcResult { text: string; count: number }
+export interface IfcResult {
+  text: string;
+  /** exportierte Bauteile (inkl. Bewehrungsstäbe) */
+  count: number;
+  /** Bewehrungsstäbe / -sätze, Öffnungen */
+  bars?: number; sets?: number; openings?: number;
+}
 
 export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()): IfcResult {
-  const w = new StepWriter();
   const pi = projectInfo(doc) ?? ({ name: 'Projekt', number: '', author: '', client: '', address: '', status: '' } as any);
   // Projektschlüssel für stabile GUIDs
   const seed = [pi.name, pi.number, pi.date, ...doc.all('view').map((v) => v.id).sort().slice(0, 3)].join('|');
-  const used = new Set<string>();
-  const guid = (key: string): string => {
-    let g = compressGuid(hash128(seed + '#' + key)); let i = 1;
-    while (used.has(g)) g = compressGuid(hash128(seed + '#' + key + '#' + i++));
-    used.add(g);
-    return `'${g}'`;
-  };
+  const o = new IfcOut(doc, seed);
+  const guid = (k: string) => o.guid(k);
 
   // Eigentümer / Anwendung
   const author = pi.author || 'OpenRiss';
-  const person = w.add(`IFCPERSON($,${S(author)},$,$,$,$,$,$)`);
-  const devOrg = w.add(`IFCORGANIZATION($,'OpenRiss',$,$,$)`);
-  const pao = w.add(`IFCPERSONANDORGANIZATION(${ref(person)},${ref(devOrg)},$)`);
-  const appl = w.add(`IFCAPPLICATION(${ref(devOrg)},'0.1','OpenRiss','OpenRiss')`);
+  const person = o.add(`IFCPERSON($,${S(author)},$,$,$,$,$,$)`);
+  const devOrg = o.add(`IFCORGANIZATION($,'OpenRiss',$,$,$)`);
+  const pao = o.add(`IFCPERSONANDORGANIZATION(${ref(person)},${ref(devOrg)},$)`);
+  const appl = o.add(`IFCAPPLICATION(${ref(devOrg)},'0.1','OpenRiss','OpenRiss')`);
   const ts = Math.floor(now.getTime() / 1000);
-  const oh = w.add(`IFCOWNERHISTORY(${ref(pao)},${ref(appl)},$,.ADDED.,${ts},${ref(pao)},${ref(appl)},${ts})`);
-  const OH = ref(oh);
+  o.OH = ref(o.add(`IFCOWNERHISTORY(${ref(pao)},${ref(appl)},$,.ADDED.,${ts},${ref(pao)},${ref(appl)},${ts})`));
+  const OH = o.OH;
 
-  // Einheiten
-  const uLen = w.add(`IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.)`);
-  const uArea = w.add(`IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.)`);
-  const uVol = w.add(`IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.)`);
-  const uAng = w.add(`IFCSIUNIT(*,.PLANEANGLEUNIT.,$,.RADIAN.)`);
-  const units = w.add(`IFCUNITASSIGNMENT(${refs([uLen, uArea, uVol, uAng])})`);
+  // Einheiten (Länge mm, Fläche m², Volumen m³, Winkel rad, Masse kg)
+  const units = o.add(`IFCUNITASSIGNMENT(${refs([
+    o.add(`IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.)`), o.add(`IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.)`), o.add(`IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.)`),
+    o.add(`IFCSIUNIT(*,.PLANEANGLEUNIT.,$,.RADIAN.)`), o.add(`IFCSIUNIT(*,.MASSUNIT.,.KILO.,.GRAM.)`),
+  ])})`);
 
   // Geometrischer Kontext
-  const origin = w.add(`IFCCARTESIANPOINT((0.,0.,0.))`);
-  const axisZ = w.add(`IFCDIRECTION((0.,0.,1.))`);
-  const axisX = w.add(`IFCDIRECTION((1.,0.,0.))`);
-  const wcs = w.add(`IFCAXIS2PLACEMENT3D(${ref(origin)},${ref(axisZ)},${ref(axisX)})`);
-  const north = w.add(`IFCDIRECTION((0.,1.))`);
-  const ctx = w.add(`IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,${ref(wcs)},${ref(north)})`);
-  const body = w.add(`IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Body','Model',*,*,*,*,${ref(ctx)},$,.MODEL_VIEW.,$)`);
-  const ident = w.add(`IFCAXIS2PLACEMENT3D(${ref(origin)},$,$)`);
+  o.origin = o.add(`IFCCARTESIANPOINT((0.,0.,0.))`);
+  const wcs = o.add(`IFCAXIS2PLACEMENT3D(${ref(o.origin)},${ref(o.dir3({ x: 0, y: 0, z: 1 }))},${ref(o.dir3({ x: 1, y: 0, z: 0 }))})`);
+  const ctx = o.add(`IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,${ref(wcs)},${ref(o.dir2({ x: 0, y: 1 }))})`);
+  o.body = o.add(`IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Body','Model',*,*,*,*,${ref(ctx)},$,.MODEL_VIEW.,$)`);
+  o.axis = o.add(`IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*,${ref(ctx)},$,.GRAPH_VIEW.,$)`);
+  const ident = o.add(`IFCAXIS2PLACEMENT3D(${ref(o.origin)},$,$)`);
 
   // Räumliche Struktur
-  const project = w.add(`IFCPROJECT(${guid('project')},${OH},${S(pi.number || pi.name)},${S(pi.address)},$,${S(pi.name)},${S(pi.status)},(${ref(ctx)}),${ref(units)})`);
-  const sitePl = w.add(`IFCLOCALPLACEMENT($,${ref(ident)})`);
-  const site = w.add(`IFCSITE(${guid('site')},${OH},${SS('Grundstück')},$,$,${ref(sitePl)},$,$,.ELEMENT.,$,$,$,$,$)`);
-  const bldPl = w.add(`IFCLOCALPLACEMENT(${ref(sitePl)},${ref(ident)})`);
-  const bld = w.add(`IFCBUILDING(${guid('building')},${OH},${SS(pi.name || 'Gebäude')},$,$,${ref(bldPl)},$,$,.ELEMENT.,$,$,$)`);
-  w.add(`IFCRELAGGREGATES(${guid('agg-project')},${OH},$,$,${ref(project)},(${ref(site)}))`);
-  w.add(`IFCRELAGGREGATES(${guid('agg-site')},${OH},$,$,${ref(site)},(${ref(bld)}))`);
+  const project = o.add(`IFCPROJECT(${guid('project')},${OH},${S(pi.number || pi.name)},${S(pi.address)},$,${S(pi.name)},${S(pi.status)},(${ref(ctx)}),${ref(units)})`);
+  const sitePl = o.add(`IFCLOCALPLACEMENT($,${ref(ident)})`);
+  const refElev = typeof pi.elev00 === 'number' && isFinite(pi.elev00) ? R(pi.elev00 * 1000) : '$';
+  const site = o.add(`IFCSITE(${guid('site')},${OH},${SS('Grundstück')},$,$,${ref(sitePl)},$,$,.ELEMENT.,$,$,${refElev},$,$)`);
+  const bldPl = o.add(`IFCLOCALPLACEMENT(${ref(sitePl)},${ref(ident)})`);
+  const bld = o.add(`IFCBUILDING(${guid('building')},${OH},${SS(pi.name || 'Gebäude')},$,$,${ref(bldPl)},$,$,.ELEMENT.,$,$,$)`);
+  o.add(`IFCRELAGGREGATES(${guid('agg-project')},${OH},$,$,${ref(project)},(${ref(site)}))`);
+  o.add(`IFCRELAGGREGATES(${guid('agg-site')},${OH},$,$,${ref(site)},(${ref(bld)}))`);
 
   // Geschosse
   const allLv = levels(doc);
   let stLv: { id: Id; name: string; elev: number }[] = allLv.filter((l) => l.story !== false);
   if (!stLv.length) stLv = allLv;
   if (!stLv.length) stLv = [{ id: '_ebene0', name: 'Ebene 0', elev: 0 }];
-  const storeys = stLv.map((l) => {
-    const pt = w.add(`IFCCARTESIANPOINT((0.,0.,${R(l.elev)}))`);
-    const ax = w.add(`IFCAXIS2PLACEMENT3D(${ref(pt)},$,$)`);
-    const pl = w.add(`IFCLOCALPLACEMENT(${ref(bldPl)},${ref(ax)})`);
-    const id = w.add(`IFCBUILDINGSTOREY(${guid('storey:' + l.id)},${OH},${SS(l.name)},$,$,${ref(pl)},$,$,.ELEMENT.,${R(l.elev)})`);
-    return { lv: l, id, pl, elems: [] as number[], spaces: [] as number[] };
+  const storeys: StoreyRec[] = stLv.map((l) => {
+    const frame = worldFrame({ x: 0, y: 0, z: l.elev });
+    const pl = o.placement(bldPl, null, frame);
+    const id = o.add(`IFCBUILDINGSTOREY(${guid('storey:' + l.id)},${OH},${SS(l.name)},$,$,${ref(pl)},$,$,.ELEMENT.,${R(l.elev)})`);
+    return { lv: l, id, pl, frame, elems: [], spaces: [] };
   });
-  w.add(`IFCRELAGGREGATES(${guid('agg-building')},${OH},$,$,${ref(bld)},${refs(storeys.map((s) => s.id))})`);
+  o.add(`IFCRELAGGREGATES(${guid('agg-building')},${OH},$,$,${ref(bld)},${refs(storeys.map((s) => s.id))})`);
 
   const storeyAt = (z: number) => { let best = storeys[0]; for (const s of storeys) if (s.lv.elev <= z + 1) best = s; return best; };
   const storeyFor = (el: El, minZ: number) => {
@@ -209,173 +159,193 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
     return storeyAt(isFinite(minZ) ? minZ : 0);
   };
 
-  // Farben (Oberflächenstile)
-  const styles = new Map<string, number>();
-  const styleFor = (color: string, opacity: number, name: string): number => {
-    const key = color + '|' + opacity;
-    let s = styles.get(key);
-    if (s) return s;
-    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color) ?? ['', 'cc', 'cc', 'cc'];
-    const ch = (h: string) => R(parseInt(h, 16) / 255, 4);
-    const col = w.add(`IFCCOLOURRGB($,${ch(m[1])},${ch(m[2])},${ch(m[3])})`);
-    const rend = w.add(`IFCSURFACESTYLERENDERING(${ref(col)},${R(1 - opacity, 3)},$,$,$,$,$,$,.NOTDEFINED.)`);
-    s = w.add(`IFCSURFACESTYLE(${SS(name)},.BOTH.,(${ref(rend)}))`);
-    styles.set(key, s);
-    return s;
-  };
+  // Bewehrung je Wirtbauteil: Pläne, Überdeckungen, Stahlsorten (für Bauteil-Psets)
+  const reinf = new Map<Id, { plans: Set<string>; covers: Set<number>; grades: Set<string> }>();
+  for (const c of ['rebar', 'areaRebar', 'fabricArea']) for (const r of doc.all(c)) {
+    if (r.viewId || !r.hostId) continue;
+    const s = reinf.get(r.hostId) ?? reinf.set(r.hostId, { plans: new Set(), covers: new Set(), grades: new Set() }).get(r.hostId)!;
+    const p = rebarPlan(r); if (p) s.plans.add(p);
+    const cv = r.coverUsed ?? r.cover; if (cv > 0) s.covers.add(Math.round(cv));
+    s.grades.add(String(r.steelGrade ?? 'B500B'));
+  }
 
-  // Materialien
-  const matEnt = new Map<Id, number>();
-  const materialOf = (id: Id): number | null => {
-    const m = doc.get<Material>(id);
-    if (!m || m.cat !== 'material') return null;
-    let e = matEnt.get(id);
-    if (!e) { e = w.add(`IFCMATERIAL(${SS(m.name)},${S(m.description)},$)`); matEnt.set(id, e); }
-    return e;
-  };
+  const prod = new Map<Id, Prod>();
   const matAssoc = new Map<string, { def: number; objs: number[] }>();
+  const assoc = (m: { key: string; id: number }, obj: number) => { const a = matAssoc.get(m.key) ?? matAssoc.set(m.key, { def: m.id, objs: [] }).get(m.key)!; a.objs.push(obj); };
+  const fills: { opening: number; el: Id }[] = [];
+  let count = 0, nOpen = 0;
 
-  // Eigenschaften
-  const prop = (name: string, v: string | number | boolean, kind: 'label' | 'text' | 'id' = 'label') => {
-    let val: string;
-    if (typeof v === 'boolean') val = `IFCBOOLEAN(${v ? '.T.' : '.F.'})`;
-    else if (typeof v === 'number') val = `IFCREAL(${R(v, 6)})`;
-    else val = kind === 'text' ? `IFCTEXT(${SS(v)})` : kind === 'id' ? `IFCIDENTIFIER(${SS(v)})` : `IFCLABEL(${SS(v)})`;
-    return w.add(`IFCPROPERTYSINGLEVALUE(${SS(name)},$,${val},$)`);
-  };
-  const pset = (key: string, name: string, props: number[], obj: number) => {
-    if (!props.length) return;
-    const ps = w.add(`IFCPROPERTYSET(${guid('pset:' + name + ':' + key)},${OH},${SS(name)},$,${refs(props)})`);
-    w.add(`IFCRELDEFINESBYPROPERTIES(${guid('relpset:' + name + ':' + key)},${OH},$,$,(${ref(obj)}),${ref(ps)})`);
-  };
-
-  // Geometrie
-  const writeBreps = (solids: Solid[], el: El, elev: number): number[] => {
-    const pts = new Map<string, number>();
-    const pt = (p: V3): number => {
-      const x = R(p.x), y = R(p.y), z = R(p.z - elev);
-      const k = x + ',' + y + ',' + z;
-      let id = pts.get(k);
-      if (!id) { id = w.add(`IFCCARTESIANPOINT((${x},${y},${z}))`); pts.set(k, id); }
-      return id;
-    };
-    const loop = (r: V3[]): number | null => {
-      const ids: number[] = [];
-      for (const p of r) { const id = pt(p); if (ids[ids.length - 1] !== id) ids.push(id); }
-      while (ids.length > 1 && ids[0] === ids[ids.length - 1]) ids.pop();
-      if (new Set(ids).size < 3) return null;
-      return w.add(`IFCPOLYLOOP(${refs(ids)})`);
-    };
-    const items: number[] = [];
-    for (const s of solids) {
-      const faces: number[] = [];
-      for (const f of s.faces) {
-        const outer = cleanRing(f.pts);
-        if (outer.length < 3) continue;
-        const n = faceNormal(outer);
-        if (Math.abs(n.x) + Math.abs(n.y) + Math.abs(n.z) < 0.5) continue;
-        const ol = loop(outer);
-        if (!ol) continue;
-        const bounds = [w.add(`IFCFACEOUTERBOUND(${ref(ol)},.T.)`)];
-        for (const h0 of f.holes ?? []) {
-          let h = cleanRing(h0);
-          if (h.length < 3) continue;
-          const hn = faceNormal(h);
-          if (hn.x * n.x + hn.y * n.y + hn.z * n.z > 0) h = h.slice().reverse(); // Lochring gegenläufig
-          const hl = loop(h);
-          if (hl) bounds.push(w.add(`IFCFACEBOUND(${ref(hl)},.T.)`));
-        }
-        faces.push(w.add(`IFCFACE(${refs(bounds)})`));
+  /** Öffnungen eines Bauteils schreiben (Platzierung relativ zum Bauteil) */
+  const writeOpenings = (host: number, hostPl: number, frame: Frame, plan: BodyPlan) => {
+    for (const sp of plan.openings) {
+      const pl = o.placement(hostPl, frame, frame);
+      const rep = o.pds([o.shapeRep(o.body, 'Body', 'SweptSolid', sp.items)]);
+      const pure = !!sp.el && !sp.filler;
+      const hk = pure ? ifcHook(sp.el!, doc) : null;
+      const pt = hk?.predefined ? E(hk.predefined) : '.OPENING.';
+      const op = o.add(`IFCOPENINGELEMENT(${guid(pure && sp.el!.cat !== 'shaft' ? 'el:' + sp.el!.id : 'opening:' + sp.key)},${OH},${SS(hk?.name || sp.name)},${S(sp.desc)},$,${ref(pl)},${ref(rep)},${S(sp.el?.id ?? '')},${pt})`);
+      o.add(`IFCRELVOIDSELEMENT(${guid('voids:' + sp.key)},${OH},$,$,${ref(host)},${ref(op)})`);
+      nOpen++;
+      if (sp.filler) fills.push({ opening: op, el: sp.filler.id });
+      if (pure && sp.el) {
+        const ps = basePsets(sp.el, catDef(sp.el.cat)?.label ?? sp.el.cat, '');
+        mergeHook(ps, hk);
+        writePsets(sp.key, ps, op);
       }
-      if (!faces.length) continue;
-      const shell = w.add(`IFCCLOSEDSHELL(${refs(faces)})`);
-      const brep = w.add(`IFCFACETEDBREP(${ref(shell)})`);
-      const look = solidLook(doc, el, s);
-      w.add(`IFCSTYLEDITEM(${ref(brep)},(${ref(styleFor(look.color, look.opacity, look.name))}),$)`);
-      items.push(brep);
     }
-    return items;
+  };
+  /** Pset_OpenRiss (Typ, Material, Kennzeichen, Kategorie, ID, Kommentare, Ebene, Projektparameter) */
+  const basePsets = (el: El, label: string, matNames: string): Map<string, Record<string, PropVal>> => {
+    const type = doc.get<TypeEl>(el.typeId);
+    const rec: Record<string, PropVal> = {
+      Typ: type?.name, Material: matNames, Kennzeichen: el.mark, Kategorie: label, 'OpenRiss-ID': { v: el.id, k: 'id' },
+      Kommentare: el.comments ? { v: el.comments, k: 'text' } : undefined,
+    };
+    const lvl = doc.get<Level>(el.levelId);
+    if (lvl?.cat === 'level') rec.Ebene = lvl.name;
+    for (const [k, v] of Object.entries(el.params ?? {})) {
+      if (k in rec) continue;
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') rec[k] = v;
+    }
+    return new Map([['Pset_OpenRiss', rec]]);
+  };
+  const mergeHook = (ps: Map<string, Record<string, PropVal>>, hk: IfcMapping | null) => {
+    for (const [n, r] of Object.entries(hk?.psets ?? {})) ps.set(n, { ...(ps.get(n) ?? {}), ...r });
+  };
+  const writePsets = (key: string, ps: Map<string, Record<string, PropVal>>, obj: number) => {
+    for (const [n, r] of ps) o.pset(key, n, r, [obj]);
   };
 
-  // Bauteile
-  let count = 0;
+  // ---------------------------------------------------------- Bauteile
   for (const el of ifcElements(doc)) {
-    const isRoom = el.cat === 'room';
-    const solids = solidsOf(doc, el);
-    if (!solids.length && !isRoom) continue;
-    let minZ = Infinity;
-    for (const s of solids) for (const f of s.faces) for (const p of f.pts) if (p.z < minZ) minZ = p.z;
-    const st = storeyFor(el, minZ);
-    const items = writeBreps(solids, el, st.lv.elev);
-    if (!items.length && !isRoom) continue;
-    let rep = '$';
-    if (items.length) {
-      const sr = w.add(`IFCSHAPEREPRESENTATION(${ref(body)},'Body','Brep',${refs(items)})`);
-      rep = ref(w.add(`IFCPRODUCTDEFINITIONSHAPE($,$,(${ref(sr)}))`));
-    }
-    const pl = w.add(`IFCLOCALPLACEMENT(${ref(st.pl)},${ref(ident)})`);
-    const type = doc.get<TypeEl>(el.typeId);
     const def = catDef(el.cat);
+    const host = el.hostId ? doc.get(el.hostId) : undefined;
+    // reine Öffnungen in Wänden erscheinen als IfcOpeningElement des Hosts
+    if (def?.hostOpening && host?.cat === 'wall' && isPureOpening(el, doc)) continue;
+    const isRoom = el.cat === 'room';
+    const hk = isRoom ? null : ifcHook(el, doc);
+    const type = doc.get<TypeEl>(el.typeId);
     const typeName = type?.name ?? '';
-    const name = typeName || el.name || def?.label || el.cat;
+    const name = hk?.name || typeName || el.name || def?.label || el.cat;
+
+    // Körper: Extrusion (bekannte Rohbauteile) oder Brep aus Solids
+    let plan: BodyPlan | null = null;
+    try { plan = isRoom ? null : bodyPlan(o, doc, el); } catch (e) { console.warn('IFC-Körper', el.cat, el.id, e); plan = null; }
+    let frame: Frame, reps: number[], st: StoreyRec, matNames = '';
+    let mat: { key: string; id: number } | undefined;
+    if (plan) {
+      st = storeyFor(el, plan.z?.[0] ?? plan.frame.o.z);
+      frame = plan.frame; reps = plan.reps; mat = plan.mat;
+      const t: any = type;
+      matNames = t?.layers?.length ? t.layers.map((l: any) => doc.get<Material>(l.mat)?.name ?? l.mat).join(', ') : (doc.get<Material>(t?.mat)?.name ?? '');
+    } else {
+      const solids = solidsOf(doc, el);
+      if (!solids.length && !isRoom) continue;
+      let minZ = Infinity;
+      for (const s of solids) for (const f of s.faces) for (const p of f.pts) if (p.z < minZ) minZ = p.z;
+      const sr = storeyFor(el, minZ);
+      st = sr; frame = sr.frame;
+      const items: number[] = [];
+      for (const s of solids) {
+        const b = o.brep(s.faces, (p) => ({ x: p.x, y: p.y, z: p.z - sr.lv.elev }));
+        if (!b) continue;
+        const lk = solidLook(doc, el, s);
+        o.styled(b, lk.color, lk.opacity, lk.name);
+        items.push(b);
+      }
+      if (!items.length && !isRoom) continue;
+      reps = items.length ? [o.shapeRep(o.body, 'Body', 'Brep', items)] : [];
+      // Materialien aus den Solids (eines oder Bestandteile)
+      const mats = [...new Set(solids.map((s) => s.mat).filter((m): m is Id => !!m && !!o.material(m)))];
+      matNames = mats.map((m) => doc.get<Material>(m)?.name ?? m).join(', ');
+      if (mats.length === 1) mat = { key: 'mat:' + mats[0], id: o.material(mats[0])! };
+      else if (mats.length > 1) {
+        const key = 'cset:' + mats.join('+');
+        mat = { key, id: o.once(key, () => {
+          const cons = mats.map((m) => o.add(`IFCMATERIALCONSTITUENT($,$,${ref(o.material(m)!)},$,$)`));
+          return o.add(`IFCMATERIALCONSTITUENTSET(${SS(typeName || matNames.replace(/, /g, ' / '))},$,${refs(cons)})`);
+        }) };
+      }
+    }
+    const rep = reps.length ? ref(o.pds(reps)) : '$';
+    const pl = o.placement(st.pl, st.frame, frame);
     const g = guid('el:' + el.id);
     let obj: number;
     if (isRoom) {
       const nr = el.number ?? el.mark ?? '';
-      obj = w.add(`IFCSPACE(${g},${OH},${SS(nr || el.name || 'Raum')},${S(el.comments)},$,${ref(pl)},${rep},${S(el.name)},.ELEMENT.,.INTERNAL.,$)`);
+      obj = o.add(`IFCSPACE(${g},${OH},${SS(nr || el.name || 'Raum')},${S(el.comments)},$,${ref(pl)},${rep},${S(el.name)},.ELEMENT.,.INTERNAL.,$)`);
       st.spaces.push(obj);
     } else {
-      const c = ifcClass(doc, el);
-      obj = w.add(`${c.ent}(${g},${OH},${SS(name)},${S(el.comments)},${S(typeName || def?.label)},${ref(pl)},${rep},${SS(el.id)},${c.tail})`);
+      const c = ifcClass(el);
+      const baseEnt = plan?.ent ?? c.ent, basePt = plan?.predefined ?? c.pt;
+      const ent = hk?.entity ? entName(hk.entity) : baseEnt;
+      const pt = hk?.predefined ? E(hk.predefined) : ent === baseEnt ? basePt : '.NOTDEFINED.';
+      const head = `${g},${OH},${SS(name)},${S(el.comments)},${S(typeName || def?.label)},${ref(pl)},${rep}`;
+      obj = ent === 'IFCANNOTATION' ? o.add(`IFCANNOTATION(${head})`) : o.add(`${ent}(${head},${SS(el.mark || el.id)}${tailFor(ent, pt, el, doc)})`);
       st.elems.push(obj);
-      if (c.pset) {
-        const ps = [prop('Reference', typeName || name, 'id')];
-        if (el.cat === 'wall') ps.push(prop('IsExternal', (type as any)?.function === 'exterior'));
-        pset(el.id, c.pset, ps, obj);
+      prod.set(el.id, { ent: obj, pl, frame, storey: st, tag: el.mark || el.id });
+      // Eigenschaften
+      const ps = basePsets(el, def?.label ?? el.cat, matNames);
+      const cp = ent === c.ent ? c.pset : COMMON_PSET[ent];
+      if (cp) {
+        const rec: Record<string, PropVal> = { Reference: { v: typeName || name, k: 'id' } };
+        const ext = type ? (type as any).function === 'exterior' : undefined;
+        const fam = catFamily(el.cat);
+        if (el.cat === 'wall' || fam === 'floor') { rec.IsExternal = !!ext; rec.LoadBearing = !!el.structural; }
+        else if (el.cat === 'foundationSlab') { rec.IsExternal = true; rec.LoadBearing = el.structural !== false; }
+        else if (['column', 'beam', 'foundation'].includes(fam)) rec.LoadBearing = el.structural !== false;
+        else if (host?.cat === 'wall' && (el.cat === 'door' || el.cat === 'window')) rec.IsExternal = (doc.get(host.typeId) as any)?.function === 'exterior';
+        if (fam === 'beam' && el.a && el.b) rec.Span = { v: Math.hypot(el.b.x - el.a.x, el.b.y - el.a.y), k: 'plen' };
+        ps.set(cp, rec);
       }
+      // Beton (Schweiz): Festigkeitsklasse, Exposition, NPK, Überdeckung, Bewehrungspläne
+      const isHost = !!plan || ['wall', 'floor', 'column', 'beam'].includes(el.cat) || el.cat.startsWith('foundation');
+      const cd = concreteData(doc, el, isHost ? coverFor(doc, el) : undefined);
+      if (cd) {
+        const ri = reinf.get(el.id);
+        const plans = [...(ri?.plans ?? [])].sort((a, b) => a.localeCompare(b, 'de', { numeric: true }));
+        // Überdeckung: Bauteilwert, sonst grösste der eingelegten Bewehrung, sonst Projektvorgabe
+        const covers = [...(ri?.covers ?? [])].sort((a, b) => a - b);
+        const cover = el.rebarCover > 0 ? el.rebarCover : covers.length ? covers[covers.length - 1] : cd.cover;
+        ps.set('Pset_ConcreteElementGeneral', {
+          StrengthClass: cd.grade, ExposureClass: cd.exposure, ConstructionMethod: cd.method,
+          ReinforcementStrengthClass: ri ? [...ri.grades].join(', ') : undefined,
+          ConcreteCover: cover && ri ? { v: cover, k: 'plen' } : undefined,
+        });
+        ps.set('CH_Tragwerk', {
+          BauteilID: el.mark || el.id, Betonsorte: concreteLabel(cd) || undefined, Festigkeitsklasse: cd.grade, NPK: cd.npk, Expositionsklasse: cd.exposure,
+          Ueberdeckung: cover ? { v: cover, k: 'plen' } : undefined,
+          Ueberdeckung_Bewehrung: covers.length > 1 ? 'c_nom ' + covers.join(' / ') + ' mm' : undefined, WU: cd.wu,
+          OK_Rohbau: plan?.z ? { v: plan.z[1], k: 'len' } : undefined, UK_Rohbau: plan?.z ? { v: plan.z[0], k: 'len' } : undefined,
+          Bewehrungsplan: plans.join(', ') || undefined,
+        });
+      }
+      mergeHook(ps, hk);
+      writePsets(el.id, ps, obj);
+      if (plan) writeOpenings(obj, pl, frame, plan);
     }
     count++;
-    // Materialien
-    const mats = [...new Set(solids.map((s) => s.mat).filter((m): m is Id => !!m && !!materialOf(m)))];
-    if (mats.length) {
-      const key = mats.join('+');
-      let a = matAssoc.get(key);
-      if (!a) {
-        let def: number;
-        if (mats.length === 1) def = materialOf(mats[0])!;
-        else {
-          const cons = mats.map((m) => w.add(`IFCMATERIALCONSTITUENT($,$,${ref(materialOf(m)!)},$,$)`));
-          def = w.add(`IFCMATERIALCONSTITUENTSET(${SS(typeName || mats.map((m) => doc.get<Material>(m)?.name ?? m).join(' / '))},$,${refs(cons)})`);
-        }
-        a = { def, objs: [] };
-        matAssoc.set(key, a);
-      }
-      a.objs.push(obj);
-    }
-    // Pset_OpenRiss
-    const ps: number[] = [
-      prop('Typ', typeName),
-      prop('Material', mats.map((m) => doc.get<Material>(m)?.name ?? m).join(', ')),
-      prop('Kennzeichen', el.mark ?? ''),
-      prop('Kategorie', def?.label ?? el.cat),
-      prop('OpenRiss-ID', el.id, 'id'),
-    ];
-    if (el.comments) ps.push(prop('Kommentare', el.comments, 'text'));
-    const lvl = doc.get<Level>(el.levelId);
-    if (lvl?.cat === 'level') ps.push(prop('Ebene', lvl.name));
-    for (const [k, v] of Object.entries(el.params ?? {})) {
-      if (['Typ', 'Material', 'Kennzeichen', 'Kategorie', 'OpenRiss-ID', 'Kommentare', 'Ebene'].includes(k)) continue;
-      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') ps.push(prop(k, v));
-    }
-    pset(el.id, 'Pset_OpenRiss', ps, obj);
+    if (mat) assoc(mat, obj);
   }
 
-  // Beziehungen
-  for (const s of storeys) {
-    if (s.elems.length) w.add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid('contained:' + s.lv.id)},${OH},$,$,${refs(s.elems)},${ref(s.id)})`);
-    if (s.spaces.length) w.add(`IFCRELAGGREGATES(${guid('agg-storey:' + s.lv.id)},${OH},$,$,${ref(s.id)},${refs(s.spaces)})`);
+  // ---------------------------------------------------------- Bewehrung
+  const rb = writeRebar(o, doc, prod, storeyAt);
+  for (const [hid, bars] of rb.byHost) {
+    const hp = prod.get(hid);
+    if (hp && bars.length) o.add(`IFCRELAGGREGATES(${guid('agg-rebar:' + hid)},${OH},$,$,${ref(hp.ent)},${refs(bars)})`);
   }
-  for (const [key, a] of matAssoc) w.add(`IFCRELASSOCIATESMATERIAL(${guid('mat:' + key)},${OH},$,$,${refs(a.objs)},${ref(a.def)})`);
+  count += rb.bars;
+
+  // ---------------------------------------------------------- Beziehungen
+  for (const f of fills) {
+    const p = prod.get(f.el);
+    if (p) o.add(`IFCRELFILLSELEMENT(${guid('fills:' + f.el)},${OH},$,$,${ref(f.opening)},${ref(p.ent)})`);
+  }
+  for (const s of storeys) {
+    if (s.elems.length) o.add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid('contained:' + s.lv.id)},${OH},$,$,${refs(s.elems)},${ref(s.id)})`);
+    if (s.spaces.length) o.add(`IFCRELAGGREGATES(${guid('agg-storey:' + s.lv.id)},${OH},$,$,${ref(s.id)},${refs(s.spaces)})`);
+  }
+  for (const [key, a] of matAssoc) if (a.objs.length) o.add(`IFCRELASSOCIATESMATERIAL(${guid('mat:' + key)},${OH},$,$,${refs(a.objs)},${ref(a.def)})`);
 
   const iso = now.toISOString().slice(0, 19);
   const head = [
@@ -387,6 +357,6 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
     'ENDSEC;',
     'DATA;',
   ];
-  const text = [...head, ...w.lines, 'ENDSEC;', 'END-ISO-10303-21;', ''].join('\n');
-  return { text, count };
+  const text = [...head, ...o.lines, 'ENDSEC;', 'END-ISO-10303-21;', ''].join('\n');
+  return { text, count, bars: rb.bars, sets: rb.sets, openings: nOpen };
 }

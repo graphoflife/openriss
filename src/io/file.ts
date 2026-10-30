@@ -47,6 +47,10 @@ export function loadData(data: any): void {
   app.emit('views');
 }
 
+// Öffentliche Lade-/Speicherfunktionen am App-Objekt (window.openriss.loadProject / saveProject)
+app.loadProject = (data) => loadData(typeof data === 'string' ? JSON.parse(data) : data);
+app.saveProject = () => serialize();
+
 export function createNew(): void {
   if (app.doc.dirty && !confirm('Ungespeicherte Änderungen verwerfen und neues Projekt beginnen?')) return;
   for (const id of [...app.viewports.keys()]) app.closeView(id);

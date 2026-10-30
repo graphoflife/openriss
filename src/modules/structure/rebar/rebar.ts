@@ -16,6 +16,9 @@ import { DIAS, kgPerM, bendR, fullPolyline, fillet, layoutOffsets, legLengths, b
 import { VF, vfOf, xfOfView, xfTranslate, Xf3, planFrame } from './frame';
 import { refit, coverFor } from './build';
 import { REBAR_COLOR, solidBox } from '../common';
+import { planOf, currentPlan, rebarMandrel, rebarNorm } from './norm';
+import type { Roll, Figure } from './sshv';
+import { figureOf } from './sshv';
 
 export type Display = 'first' | 'all' | 'firstLast' | 'middle';
 export const DISPLAY_LABELS: [Display, string][] = [['first', 'Erster + Verteilungslinie'], ['all', 'Alle'], ['firstLast', 'Erster und letzter'], ['middle', 'Mittlerer']];
@@ -43,7 +46,17 @@ export interface Rebar extends El {
   coverUsed?: number;
   display?: Display;
   fit?: RebarFit;
+  /** Bewehrungsplan = Nummernkreis der Positionsnummer (z. B. 'T-205'); leer = Kommentar, falls Plannummer */
+  plan?: string;
+  /** Biegerolle: 'd3' (Standard 4 Ø / 7 Ø) oder 'd1' = 15 Ø */
+  bendRoll?: Roll;
+  /** Schraubanschluss (Muffe) an Anfang/Ende → Spezialbewehrung, ABS-Muffenblock */
+  coupler?: Coupler;
+  /** SSHV-Formnummer manuell (sonst aus der Geometrie erkannt) */
+  form?: string;
 }
+export interface CouplerEnd { sys: string; type: string }
+export interface Coupler { start?: CouplerEnd; end?: CouplerEnd }
 
 // ------------------------------------------------------------ Geometrie
 export interface RebarGeo { full: V3[]; path: V3[]; len: number; offs: number[]; n: number; legs: number[]; sig: string; code: string }
@@ -51,7 +64,7 @@ export function shapeCode(el: Rebar): string { return el.shape || '00'; }
 export function rebarGeo(doc: Doc, el: Rebar): RebarGeo {
   const calc = (): RebarGeo => {
     const full = fullPolyline(el);
-    const f = fillet(full, bendR(el.dia));
+    const f = fillet(full, rebarMandrel(doc, el) / 2 + el.dia / 2);
     const offs = layoutOffsets(el.layout ?? 'single', el.count ?? 1, el.spacing ?? 150, el.span ?? 0);
     const code = shapeCode(el);
     return { full, path: f.path, len: f.len, offs, n: offs.length, legs: legLengths(full, el.dia), sig: barSignature(el.dia, full, code), code };
@@ -61,16 +74,19 @@ export function rebarGeo(doc: Doc, el: Rebar): RebarGeo {
 export const rebarWeight = (doc: Doc, el: Rebar) => { const g = rebarGeo(doc, el); return (g.len * g.n / 1000) * kgPerM(el.dia); };
 export function effSpacing(doc: Doc, el: Rebar): number { const o = rebarGeo(doc, el).offs; return o.length > 1 ? o[1] - o[0] : 0; }
 
-/** nächste freie Positionsnummer; gleiche Stäbe erhalten dieselbe Nummer */
+/** nächste freie Positionsnummer im Bewehrungsplan; gleiche Stäbe im selben Plan erhalten dieselbe Nummer.
+ *  Neue Sätze ohne `plan` erhalten den aktuellen Bewehrungsplan (el.plan wird gesetzt). */
 export function assignPos(doc: Doc, el: Rebar): number {
-  const sig = rebarGeo(doc, { ...el, id: '__sig' } as Rebar).sig;
-  for (const o of doc.all<Rebar>('rebar')) if (o.id !== el.id && rebarGeo(doc, o).sig === sig) return o.pos;
-  return maxPos(doc) + 1;
+  if (el.plan === undefined && currentPlan(doc)) el.plan = currentPlan(doc);
+  const sig = rebarGeo(doc, { ...el, id: '__sig' } as Rebar).sig; const plan = planOf(el);
+  for (const o of doc.all<Rebar>('rebar')) if (o.id !== el.id && planOf(o) === plan && rebarGeo(doc, o).sig === sig) return o.pos;
+  return maxPos(doc, plan) + 1;
 }
-export function maxPos(doc: Doc): number {
+/** höchste Positionsnummer (plan angegeben: nur in diesem Bewehrungsplan) */
+export function maxPos(doc: Doc, plan?: string): number {
   let m = 0;
-  for (const o of doc.all<Rebar>('rebar')) m = Math.max(m, o.pos ?? 0);
-  for (const a of doc.all('areaRebar')) for (const l of a.layers ?? []) m = Math.max(m, l.pos ?? 0);
+  for (const o of doc.all<Rebar>('rebar')) if (plan === undefined || planOf(o) === plan) m = Math.max(m, o.pos ?? 0);
+  for (const a of doc.all('areaRebar')) if (plan === undefined || planOf(a) === plan) for (const l of a.layers ?? []) m = Math.max(m, l.pos ?? 0);
   return m;
 }
 
@@ -346,7 +362,7 @@ function rebarDragGrip(doc: Doc, el: Rebar, id: string, p: V2, view: View): Part
 // ------------------------------------------------------------ Kategorie
 registerCategory({
   cat: 'rebar', label: 'Tragwerksbewehrung', plural: 'Tragwerksbewehrung', planOrder: 80, sectionOnlyCustom: true,
-  hostCats: ['wall', 'floor', 'column', 'beam', 'foundationIsolated', 'foundationWall', 'foundationSlab'],
+  hostCats: ['wall', 'floor', 'column', 'beam', 'foundationIsolated', 'foundationWall', 'foundationSlab', 'stair'],
   drawPlan: (ctx: PlanCtx, el) => {
     if (ctx.view.kind !== 'plan') return;
     const vf = vfOf(ctx.doc, ctx.view); if (!vf) return;
@@ -380,8 +396,8 @@ registerCategory({
 });
 
 // ------------------------------------------------------------ Beschriftungstexte
-export type TagFmt = 'std' | 'long' | 'short' | 'count';
-export const TAG_FORMATS: [TagFmt, string][] = [['std', '12 Ø10 - 15  ③'], ['long', '③ 12 Ø10 a=15 l=2,35'], ['short', '③ Ø10'], ['count', '12 Ø10']];
+export type TagFmt = 'std' | 'long' | 'short' | 'count' | 'ch';
+export const TAG_FORMATS: [TagFmt, string][] = [['std', '12 Ø10 - 15  ③'], ['long', '③ 12 Ø10 a=15 l=2,35'], ['short', '③ Ø10'], ['count', '12 Ø10'], ['ch', '③ 12 Ø10 s=150 L=2.35 F21 (Schweiz)']];
 const cm = (mm: number) => fmtNum(mm / 10, mm % 10 ? 1 : 0);
 /** Text ohne Positionskreis; Positionsnummer separat */
 export function rebarLabel(doc: Doc, el: Rebar, fmt: TagFmt): string {
@@ -392,7 +408,19 @@ export function rebarLabel(doc: Doc, el: Rebar, fmt: TagFmt): string {
     case 'long': return `${n} Ø${d}${n > 1 && s > 0 ? ' a=' + cm(s) : ''} l=${fmtNum(g.len / 1000, 2)}`;
     case 'short': return `Ø${d}`;
     case 'count': return `${n} Ø${d}`;
+    case 'ch': {
+      // SSHV-Formnummer und Länge wie Eisenliste (SIA: abgewickelte Länge = Σ Aussenmasse)
+      const f = chFigure(doc, el);
+      const L = rebarNorm(doc) === 'SIA' ? f.legs.reduce((a, l) => a + Math.round(l), 0) : g.len;
+      return `${n} Ø${d}${n > 1 && s > 0 ? ' s=' + Math.round(s) : ''} L=${(L / 1000).toFixed(2)}${f.nr ? ' F' + f.nr : ''}`;
+    }
   }
+}
+/** SSHV-Figur des Satzes – gleiche Berechnung und gleicher Cache wie rebarFigure() in steel.ts
+ *  (dort nicht importiert: steel.ts → area.ts → tag.ts würde einen Importzyklus beim Laden auslösen) */
+function chFigure(doc: Doc, el: Rebar): Figure {
+  const calc = () => figureOf(rebarGeo(doc, el).full, el.dia, rebarMandrel(doc, el), { nr: el.form, d1: el.bendRoll === 'd1' });
+  return el.id.startsWith('__') ? calc() : cached(doc, 'rebarFigure', el.id, calc);
 }
 
 export { planFrame };

@@ -43,7 +43,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Phasen für Umbauplanung: Bestand, Neubau, Abbruch – Bauantragsdarstellung (grau/rot/gelb)
 - 3D-Ansicht mit ViewCube, Orbit (Umschalt + mittlere Maustaste), visuellen Stilen und Schnittbereich
 - Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten
-- Drucken/PDF, SVG, PNG, DXF (Export und Import), IFC4-Export, glTF/OBJ, Rasterbilder als Unterlage
+- Drucken, Vektor-PDF ohne Druckdialog (einzelner Plan oder „Alle Pläne als PDF“, Maßstab exakt, Schrift
+  eingebettet), SVG, PNG, DXF (Export und Import), IFC4-Export, glTF/OBJ, Rasterbilder als Unterlage
 - Beispielprojekt (Einfamilienhaus mit Plänen, Schnitten, Bewehrung und Türliste) unter
   *Einfügen → Beispielprojekt*
 
@@ -104,6 +105,19 @@ Mattenbewehrung funktionieren in Decken und Platten (Grundriss), Bewehrungssätz
 Projekte werden als `*.oriss` (JSON) gespeichert. Zusätzlich speichert OpenRiss den aktuellen Stand
 automatisch im Browser (IndexedDB) und stellt ihn beim nächsten Öffnen wieder her.
 
+## Skripte und Kommandozeile
+
+OpenRiss lässt sich auch ohne Browser als Bibliothek verwenden – z. B. um ein Projekt aus Berechnungsdaten
+zu erzeugen und Pläne automatisch auszugeben:
+
+```bash
+npx openriss build examples/einfamilienhaus.ts --out haus.oriss --pdf plansatz.pdf --dxf dxf --ifc haus.ifc
+npx openriss export haus.oriss --pdf --svg
+npx openriss check elemente.json
+```
+
+Funktionen und alle Element-Felder: [docs/API.md](docs/API.md).
+
 ## Entwicklung
 
 ```bash
@@ -126,3 +140,11 @@ siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Lizenz
 
 [MIT](LICENSE) – frei verwendbar, auch kommerziell.
+
+### Lizenzen Dritter
+
+- [three.js](https://threejs.org) (MIT), [polygon-clipping](https://github.com/mfogel/polygon-clipping) (MIT),
+  [fflate](https://github.com/101arrowz/fflate) (MIT, Komprimierung im PDF-Export)
+- Schrift **Liberation Sans** (Regular, Bold) für den PDF-Export, eingebettet als Teilmenge:
+  SIL Open Font License 1.1, Copyright © 2012 Red Hat, Inc. – siehe
+  [src/modules/output/fonts/OFL.txt](src/modules/output/fonts/OFL.txt)

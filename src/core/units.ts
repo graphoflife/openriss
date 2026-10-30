@@ -10,13 +10,15 @@ export const unitSettings = {
   angleDecimals: 2,
   /** Hochgestellte 5 (Rohbaumaß-Schreibweise 3,65⁵) – nur bei m/cm relevant */
   superscriptFive: false,
+  /** Dezimaltrennzeichen der Anzeige (DE: Komma, CH: Punkt) */
+  decimalSep: ',' as ',' | '.',
 };
 
 const factor: Record<LengthUnit, number> = { mm: 1, cm: 10, m: 1000 };
 
 export function fmtNum(v: number, decimals: number): string {
-  const s = v.toFixed(decimals);
-  return s.replace('.', ',').replace(/^-0(,0+)?$/, '0$1');
+  const s = v.toFixed(decimals).replace(/^-0(\.0+)?$/, '0$1');
+  return unitSettings.decimalSep === ',' ? s.replace('.', ',') : s;
 }
 
 /** Länge formatieren (ohne Einheitenzeichen, wie in Revit-Bemaßungen). */
