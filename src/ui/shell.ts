@@ -160,11 +160,15 @@ export function buildShell(root: HTMLElement): void {
     } else if (ctxTabActive) { ctxTabActive = false; }
     ribbon.innerHTML = '';
     const panels = ctxTabActive ? [...contextPanelsFor(cats).map((p) => ({ tab: '', panel: p.panel, items: p.items.map((c) => ({ cmd: c, size: 'large' as const })) })), ...panelsOf('Ändern')] : panelsOf(activeTab);
+    const shown = new Set<string>();
     for (const p of panels) {
+      const pItems = p.items.filter((it) => (ctxTabActive ? !shown.has(it.cmd) : true));
+      for (const it of pItems) shown.add(it.cmd);
+      if (!pItems.some((it) => cmd(it.cmd))) continue;
       const pan = h('div', { class: 'rpanel' });
       const items = h('div', { class: 'rpanel-items' });
       let col: HTMLDivElement | null = null;
-      for (const it of p.items) {
+      for (const it of pItems) {
         const c = cmd(it.cmd); if (!c) continue;
         const on = c.checked?.() || app.tool?.id === c.id;
         const dis = !!(c.enabled && !c.enabled());

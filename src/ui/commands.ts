@@ -248,7 +248,13 @@ registerPanel('Ändern', 'Ansicht', [{ cmd: 'tempHide', size: 'small' }, { cmd: 
 
 // Kontextpanels
 registerCommand({ id: 'flipWall', label: 'Ausrichtung umkehren', icon: 'flip', tip: 'Leertaste', run: () => app.tool.space() || app.defaultTool.space() });
-registerContextPanel({ cats: ['wall'], panel: 'Wand', items: ['flipWall', 'wallAttachTop', 'wallDetachTop', 'wallEditProfile'] });
+registerCommand({ id: 'wallDisallowJoin', label: 'Verbindung nicht zulassen', icon: 'split', tip: 'Wandverbindungen an beiden Enden der ausgewählten Wände lösen bzw. wieder zulassen', enabled: () => app.selected().some((e) => e.cat === 'wall'), run: () => {
+  const ws = app.selected().filter((e) => e.cat === 'wall');
+  const off = !ws.every((w) => w.noJoinA && w.noJoinB);
+  app.doc.transaction('Wandverbindung', () => { for (const w of ws) app.doc.update(w.id, { noJoinA: off, noJoinB: off }); });
+  app.status(off ? 'Wandverbindungen gelöst.' : 'Wandverbindungen zugelassen.');
+} });
+registerContextPanel({ cats: ['wall'], panel: 'Wand', items: ['flipWall', 'wallAttachTop', 'wallDetachTop', 'wallDisallowJoin', 'wallEditProfile'] });
 registerContextPanel({ cats: ['door', 'window'], panel: 'Öffnung', items: ['flipWall'] });
 registerCommand({ id: 'openView', label: 'Ansicht öffnen', icon: 'plan', enabled: () => app.selected().some((e) => e.cat === 'view'), run: () => { const v = app.selected().find((e) => e.cat === 'view'); if (v) app.openView(v.id); } });
 registerContextPanel({ cats: ['view'], panel: 'Ansicht', items: ['openView'] });

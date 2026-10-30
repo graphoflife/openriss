@@ -148,7 +148,8 @@ export class App {
 
   // ------------------------------------------------------------ Bearbeitung
   deleteSelection(): void {
-    const ids = [...this.selection].filter((id) => !this.doc.get(id)?.pinned);
+    const act = this.activeView()?.id;
+    const ids = [...this.selection].filter((id) => !this.doc.get(id)?.pinned && id !== act);
     if (!ids.length) { if (this.selection.size) this.status('Fixierte Elemente können nicht gelöscht werden.'); return; }
     const views = ids.map((id) => this.doc.get(id)).filter((e) => e?.cat === 'view');
     if (views.length && !confirm(`${views.length} Ansicht(en) werden mit allen Beschriftungen gelöscht. Fortfahren?`)) return;

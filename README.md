@@ -1,0 +1,116 @@
+# OpenRiss – BIM-Zeichnen im Browser
+
+**OpenRiss** ist ein freies, quelloffenes BIM-Zeichenprogramm, das komplett im Browser läuft – ohne
+Installation, ohne Server, ohne Konto. Bedienung, Begriffe und Tastenkürzel orientieren sich an
+Autodesk Revit, damit der Umstieg leichtfällt: Wer `WA` tippt, zeichnet eine Wand, `DR` setzt eine
+Tür, `DI` bemaßt, `MV` verschiebt.
+
+> OpenRiss ist ein unabhängiges Projekt und steht in keiner Verbindung zu Autodesk. „Revit“ ist eine
+> Marke der Autodesk, Inc. und wird hier nur zur Beschreibung der Bedienlogik genannt.
+
+**Online starten:** nach dem Veröffentlichen unter `https://<benutzer>.github.io/<repository>/`
+
+## Funktionen
+
+**Modellieren (Architektur)**
+- Wände mit Schichtaufbau (Struktur bearbeiten), Basislinie, Abhängigkeiten oben/unten, automatische
+  Eck-, T- und Kreuzverbindungen, saubere Schraffur je Material, Leertaste kehrt die Außenseite um
+- Türen und Fenster (Rohbaumaße, ein-/zweiflügelig, Schiebetür, Dreh-Kipp-Symbol in Ansichten),
+  automatische Kennzeichen, Anschlag/Aufschlag umkehren
+- Geschossdecken, Decken, Dächer (Walm-, Sattel-, Pult- und Flachdach, Wände oben fixieren),
+  Treppen, Geländer, Bauteile (Möbel, Sanitär, Küche), Räume mit Fläche und Raumstempel,
+  Raumtrennung, Wand- und Schachtöffnungen
+- Ebenen, Raster (automatische Bezeichnung), Referenzebenen, Modell- und Detaillinien
+
+**Tragwerk und Bewehrung**
+- Tragwerksstützen, Träger, Einzel-/Streifenfundamente, Fundamentplatten
+- Stabbewehrung mit Biegeformen (gerade, Winkel, Steckbügel, Bügel, Haken), Verlegung nach Anzahl oder
+  Abstand, Betondeckung, Positionsnummern, Bewehrungsbeschriftung
+- Flächenbewehrung und Lagermatten (Q- und R-Matten) mit Verlegeplan
+- Stahlliste / Biegeliste mit Gewichten, CSV-Export
+
+**Beschriften**
+- Ausgerichtete Bemaßung (Maßketten, ganze Wände mit Öffnungen, assoziativ), lineare, Winkel- und
+  Radiusbemaßung, Höhenkoten
+- Text, Beschriftung nach Kategorie, Alle beschriften, Raumstempel
+- Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Nordpfeil
+
+**Ansichten und Ausgabe**
+- Grundrisse, Deckenpläne, Gebäudeansichten, Schnitte, Detailausschnitte, Zeichnungsansichten,
+  Legenden, 3D-Ansicht mit Schnittbereich
+- Detaillierungsgrad (grob/mittel/fein), Maßstab, Zuschneiden, Sichtbarkeit/Grafiken (VV),
+  temporär ausblenden/isolieren (HH/HI/HR), dünne Linien (TL), Unterlage
+- Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten
+- Drucken/PDF, SVG, PNG, DXF (Export und Import), IFC-Export
+
+**Bedienung wie in Revit**
+- Multifunktionsleiste mit kontextabhängigem Register „Ändern | …“, Eigenschaftenpalette mit
+  Typenauswahl und „Typ bearbeiten“, Projektbrowser, Optionsleiste, Statusleiste
+- Temporäre Bemaßungen: Wert anklicken und ändern verschiebt das Element
+- Objektfang (Endpunkt, Mittelpunkt, Schnittpunkt, Lot, Zentrum …), Winkelfang, Längeneingabe beim
+  Zeichnen (auch Ausdrücke wie `2,51+0,115m`)
+- Ändern-Werkzeuge: Verschieben, Kopieren, Drehen, Spiegeln, Reihe, Skalieren, Ausrichten,
+  Stutzen/Dehnen, Teilen, Versatz, Fixieren, Typ anpassen, Ähnliches erstellen
+- Unbegrenztes Rückgängig/Wiederherstellen, Zwischenablage (auch an gleicher Position einfügen)
+- Tastaturbefehle frei belegbar (KS), Import einer Revit-`KeyboardShortcuts.xml`
+
+## Wichtige Tastenkürzel
+
+| Kürzel | Befehl | Kürzel | Befehl |
+|---|---|---|---|
+| `WA` | Wand | `MV` | Verschieben |
+| `DR` | Tür | `CO` / `CC` | Kopieren |
+| `WN` | Fenster | `RO` | Drehen |
+| `CM` | Bauteil | `MM` / `DM` | Spiegeln (Achse wählen / zeichnen) |
+| `SB` | Geschossdecke | `AR` | Reihe |
+| `RF` | Dach | `AL` | Ausrichten |
+| `CL` | Tragwerksstütze | `TR` | Stutzen/Dehnen zu Ecke |
+| `BM` | Träger | `SL` | Element teilen |
+| `RB` | Stabbewehrung | `OF` | Versatz |
+| `RM` | Raum | `RE` | Skalieren |
+| `LL` | Ebene | `PN` / `UP` | Fixieren / Lösen |
+| `GR` | Raster | `MA` | Typeigenschaften anpassen |
+| `RP` | Referenzebene | `CS` | Ähnliches erstellen |
+| `LI` / `DL` | Modell-/Detaillinie | `DE`, Entf | Löschen |
+| `DI` | Ausgerichtete Bemaßung | `VV` / `VG` | Sichtbarkeit/Grafiken |
+| `EL` | Höhenkote | `HH` / `HI` / `HR` | Temporär ausblenden / isolieren / zurücksetzen |
+| `TX` | Text | `EH` / `VH` | In Ansicht ausblenden: Element / Kategorie |
+| `TG` | Beschriftung nach Kategorie | `TL` | Dünne Linien |
+| `RT` | Raumbeschriftung | `ZE` / `ZF` / `ZA` | Zoom Grenzen |
+| `3D` | Standard-3D-Ansicht | `ZR` / `ZP` | Bereich vergrößern / vorheriger Zoom |
+| `KS` | Tastaturbefehle | `SE` `SM` `SI` `SN` `SP` `SO` | Fangüberschreibungen |
+
+Weitere: `Strg+Z/Y` Rückgängig/Wiederherstellen, `Strg+C/X/V` Zwischenablage, `Strg+S` Speichern,
+`Esc` (zweimal) beendet ein Werkzeug, `Enter` wiederholt den letzten Befehl, `Tab` wechselt zwischen
+überlagerten Elementen, `Leertaste` kehrt um, Pfeiltasten verschieben die Auswahl.
+
+**Maus:** Rad = Zoom, mittlere Taste ziehen = Verschieben, Doppelklick Mausrad = Zoom Grenzen,
+Umschalt + mittlere Taste = Orbit in 3D.
+
+## Dateien
+
+Projekte werden als `*.oriss` (JSON) gespeichert. Zusätzlich speichert OpenRiss den aktuellen Stand
+automatisch im Browser (IndexedDB) und stellt ihn beim nächsten Öffnen wieder her.
+
+## Entwicklung
+
+```bash
+npm install
+npm run dev      # Entwicklungsserver auf http://localhost:5173
+npm run build    # Typprüfung + Produktions-Build nach dist/
+```
+
+Architektur und Erweiterungspunkte (Kategorien, Werkzeuge, Befehle, Display-Liste, Schnitt-Engine):
+siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Veröffentlichen auf GitHub Pages
+
+1. Repository auf GitHub anlegen und den Code nach `main` pushen.
+2. In den Repository-Einstellungen unter **Settings → Pages → Build and deployment** als Quelle
+   **GitHub Actions** wählen.
+3. Der Workflow [.github/workflows/deploy.yml](.github/workflows/deploy.yml) baut die Anwendung bei
+   jedem Push und veröffentlicht sie. Da Vite mit `base: './'` baut, funktioniert jeder Unterpfad.
+
+## Lizenz
+
+[MIT](LICENSE) – frei verwendbar, auch kommerziell.

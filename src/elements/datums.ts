@@ -2,7 +2,7 @@
 import type { Doc, El, Id } from '../core/doc';
 import { V2, add, sub, mul, norm, perp, dist, apply, isMirror, lineLine, mid, fromAngle, angleOf, rotate, Mat2, matAngle, distToSeg, BBox } from '../core/geom';
 import { registerCategory, CategoryDef, SectionCtx, PropDef, GROUPS, Grip } from '../core/registry';
-import { Level, View, isPlanLike, isSectionLike, levels, makeProjector } from '../core/view';
+import { Level, View, isPlanLike, isSectionLike, levels, makeProjector, cropBox } from '../core/view';
 import { fmtElev, fmtLen } from '../core/units';
 import { DisplayList } from '../render/displayList';
 import { catPen } from '../views/sectionEngine';
@@ -11,6 +11,8 @@ import type { DashName, Pen } from '../render/styles';
 const TXT = 2.5; // Standard-Texthöhe Papier-mm
 
 // ------------------------------------------------------------ Ebenen
+/** zuletzt gezeichnete rechte Enden der Ebenenlinien je Ansicht (für Griffe) */
+const levelHeadX = new Map<string, number>();
 function levelExtents(ctx: SectionCtx): [number, number] {
   const b = ctx.modelBox;
   if (b && isFinite(b.min.x)) return [b.min.x - ctx.view.scale * 8, b.max.x + ctx.view.scale * 8];
@@ -22,6 +24,7 @@ registerCategory({
   drawSection: (ctx, el) => {
     const l = el as Level; const dl = ctx.dl; const s = ctx.view.scale;
     const [x0, x1] = l.ext ?? levelExtents(ctx);
+    levelHeadX.set(ctx.view.id + '|' + l.id, x1);
     const y = l.elev - ctx.origin.z;
     const pen: Pen = { ...catPen(ctx.doc, 'level', false), dash: 'center' };
     dl.line({ x: x0, y }, { x: x1, y }, pen, { sub: 'line' });
@@ -41,7 +44,7 @@ registerCategory({
   grips: (el, doc, view) => {
     if (!isSectionLike(view)) return [];
     const l = el as Level; const pr = makeProjector(view);
-    const x = (l.ext?.[1]) ?? 0;
+    const x = l.ext?.[1] ?? levelHeadX.get(view.id + '|' + l.id) ?? 0;
     return [{ id: 'elev', p: { x, y: l.elev - pr.origin.z }, kind: 'end', tip: 'Höhe ändern' }];
   },
   dragGrip: (el, id, p, doc, view) => {
@@ -312,6 +315,21 @@ registerCategory({
   },
   grips: (el, doc, view) => {
     const v = el as View;
+    // eigener Zuschneidebereich (Rahmen in der Ansicht selbst gewählt)
+    if (v.id === view.id) {
+      if (!v.crop) return [];
+      const b = cropBox({ ...v, crop: { ...v.crop, on: true } })!;
+      const mx = (b.min.x + b.max.x) / 2, my = (b.min.y + b.max.y) / 2;
+      const g: Grip[] = [
+        { id: 'cropT', p: { x: mx, y: b.max.y }, kind: 'arrow', dir: { x: 0, y: 1 }, tip: 'Zuschneidebereich' },
+        { id: 'cropB', p: { x: mx, y: b.min.y }, kind: 'arrow', dir: { x: 0, y: -1 }, tip: 'Zuschneidebereich' },
+      ];
+      if (v.kind !== 'section') g.push(
+        { id: 'cropL', p: { x: b.min.x, y: my }, kind: 'arrow', dir: { x: -1, y: 0 }, tip: 'Zuschneidebereich' },
+        { id: 'cropR', p: { x: b.max.x, y: my }, kind: 'arrow', dir: { x: 1, y: 0 }, tip: 'Zuschneidebereich' },
+      );
+      return g;
+    }
     if (!isPlanLike(view)) return [];
     if (v.kind === 'section' && v.lineA && v.lineB) {
       const dir = v.dir ?? perp(norm(sub(v.lineB, v.lineA)));
@@ -330,6 +348,14 @@ registerCategory({
   },
   dragGrip: (el, id, p) => {
     const v = el as View;
+    if (id.startsWith('crop') && v.crop) {
+      const c = { ...v.crop, min: { ...v.crop.min }, max: { ...v.crop.max } };
+      if (id === 'cropT') c.max.y = Math.max(p.y, c.min.y + 100);
+      if (id === 'cropB') c.min.y = Math.min(p.y, c.max.y - 100);
+      if (id === 'cropL') c.min.x = Math.min(p.x, c.max.x - 100);
+      if (id === 'cropR') c.max.x = Math.max(p.x, c.min.x + 100);
+      return { crop: c };
+    }
     if (v.kind === 'section' && v.lineA && v.lineB) {
       if (id === 'a') return sectionGeomPatch(p, v.lineB, v);
       if (id === 'b') return sectionGeomPatch(v.lineA, p, v);

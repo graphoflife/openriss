@@ -36,6 +36,7 @@ export class CanvasView implements ViewportLike {
   mouse: V2 = { x: 0, y: 0 };
   lastEvent: ToolEvent | null = null;
   hover: Id | null = null;
+  hoverSet: Set<Id> | null = null;
   hoverCands: { id: Id }[] = [];
   snap: SnapResult | null = null;
   grips: GripHit[] = [];
@@ -160,10 +161,8 @@ export class CanvasView implements ViewportLike {
     const dl = this.displayList(); const xf = this.xf(); const k = this.pxPerPaperMm(); const dpr = this.dpr;
     const sel = app.selection;
     // Vorauswahl
-    if (this.hover && !sel.has(this.hover)) {
-      const h = this.hover;
-      paint(ctx, dl, xf, { pxPerPaperMm: k, thin: true, filter: (it) => it.o === h, color: HOVER_COLOR, boost: 1, showSel: true, noFill: true, dpr });
-    }
+    const hov = this.hoverSet ?? (this.hover && !sel.has(this.hover) ? new Set([this.hover]) : null);
+    if (hov) paint(ctx, dl, xf, { pxPerPaperMm: k, thin: true, filter: (it) => !!it.o && hov.has(it.o), color: HOVER_COLOR, boost: 1, showSel: true, noFill: true, dpr });
     if (sel.size) paint(ctx, dl, xf, { pxPerPaperMm: k, thin: app.settings.thinLines, filter: (it) => !!it.o && sel.has(it.o), color: SEL_COLOR, boost: 0.5, showSel: true, noFill: true, dpr });
     // Griffe und temporäre Bemaßungen (nur im Ändern-Werkzeug)
     this.grips = []; this.dims = [];
@@ -307,14 +306,15 @@ export class CanvasView implements ViewportLike {
     inp.style.left = s.x + 'px'; inp.style.top = s.y + 'px';
     this.el.querySelector('.vp-stack')!.appendChild(inp);
     this.input = inp;
-    inp.focus();
-    if (selectAll) inp.select(); else inp.setSelectionRange(inp.value.length, inp.value.length);
+    // Fokus erst nach der Standardaktion des Mausklicks setzen
+    const focus = () => { inp.focus(); if (selectAll) inp.select(); else inp.setSelectionRange(inp.value.length, inp.value.length); };
+    focus(); setTimeout(focus, 0);
     inp.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') { const v = inp.value; this.closeInput(); onOk(v); }
       else if (e.key === 'Escape') this.closeInput();
     });
-    inp.addEventListener('blur', () => setTimeout(() => { if (this.input === inp) this.closeInput(); }, 100));
+    setTimeout(() => inp.addEventListener('blur', () => setTimeout(() => { if (this.input === inp && document.activeElement !== inp) this.closeInput(); }, 150)), 50);
   }
   closeInput(): void { if (this.input) { this.input.remove(); this.input = null; } }
   hasInput(): boolean { return !!this.input; }
@@ -404,7 +404,7 @@ export class CanvasView implements ViewportLike {
       const f = Math.pow(1.0015, -e.deltaY * (e.deltaMode === 1 ? 30 : 1));
       this.zoomBy(f, { x: e.clientX - r.left, y: e.clientY - r.top });
     }, { passive: false });
-    c.addEventListener('mouseleave', () => { this.hover = null; this.snap = null; this.redrawOverlay(); });
+    c.addEventListener('mouseleave', () => { this.hover = null; this.hoverSet = null; this.snap = null; this.redrawOverlay(); });
     c.addEventListener('dragover', (e) => { e.preventDefault(); });
     c.addEventListener('drop', (e) => {
       e.preventDefault();

@@ -26,7 +26,8 @@ export function activeLevelId(view?: View | null): Id {
 /** Vorgabewerte je Kategorie (Typ + Parameter) über Werkzeugaufrufe hinweg merken */
 const lastProto = new Map<string, El>();
 export function placementFor(cat: string, defaults: Partial<El>): PlacementTarget {
-  const types = typesOf(app.doc, cat);
+  // Standardtyp: erster Typ in Vorlagen-Reihenfolge (nicht alphabetisch)
+  const types = app.doc.all<any>('type').filter((t) => t.of === cat);
   const prev = lastProto.get(cat);
   const proto: El = { id: '', cat, ...defaults, ...(prev ?? {}) } as El;
   if (prev) Object.assign(proto, { levelId: defaults.levelId, topLevelId: defaults.topLevelId ?? prev.topLevelId });
@@ -239,7 +240,7 @@ export class OpeningTool extends Tool {
   private hand = false;
   constructor(public cat: 'door' | 'window') { super(); this.id = cat; this.label = cat === 'door' ? 'Tür' : 'Fenster'; }
   activate(): void {
-    const t0 = typesOf(app.doc, this.cat)[0] as any;
+    const t0 = app.doc.all<any>('type').find((t) => t.of === this.cat);
     this.placement = placementFor(this.cat, { sill: this.cat === 'window' ? t0?.sill ?? 900 : 0 });
   }
   deactivate(): void { rememberProto(this.placement); }

@@ -19,6 +19,7 @@ import { installKeyboard } from './ui/keyboard';
 import { SelectTool } from './tools/selectTool';
 import { createNew, installAutosave, restoreAutosave } from './io/file';
 import { emitHook } from './core/registry';
+import { showWelcome } from './ui/welcome';
 
 async function start(): Promise<void> {
   const select = new SelectTool();
@@ -32,5 +33,6 @@ async function start(): Promise<void> {
   installAutosave();
   app.setTool(null);
   emitHook('started');
+  showWelcome();
 }
 start();

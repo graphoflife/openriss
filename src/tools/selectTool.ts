@@ -18,7 +18,7 @@ export class SelectTool extends Tool {
   id = 'select'; label = 'Ändern'; cursor = 'default'; viewBound = false;
   private drag: Drag | null = null;
   private cycle = 0;
-  private lastCands: Id[] = [];
+  private lastCands: (Id | Id[])[] = [];
   /** Filterfunktion für Auswahl (z.B. "Verknüpfungen auswählen") */
   static filter: ((el: El) => boolean) | null = null;
 
@@ -29,10 +29,16 @@ export class SelectTool extends Tool {
   private candidates(e: ToolEvent): Id[] {
     const hits = e.vp.hit(e.raw, (id: Id) => {
       const el = app.doc.get(id); if (!el) return false;
-      if (el.cat === 'view' && el.id === e.view.id) return false;
       return SelectTool.filter ? SelectTool.filter(el) : true;
     });
     return hits.map((h: { id: Id }) => h.id);
+  }
+  /** Kandidaten inkl. Wandkette (Tab wie in Revit) */
+  private cycleCands(e: ToolEvent): (Id | Id[])[] {
+    const c: (Id | Id[])[] = this.candidates(e);
+    const first = c.length ? app.doc.get(c[0] as Id) : undefined;
+    if (first?.cat === 'wall') { const ch = wallChain(first.id); if (ch.length > 1) c.splice(1, 0, ch); }
+    return c;
   }
 
   move(e: ToolEvent): void {
@@ -40,9 +46,11 @@ export class SelectTool extends Tool {
     if (this.drag) { this.dragMove(e); return; }
     const g = vp.gripAt(e.screen);
     vp.over.style.cursor = g ? 'pointer' : vp.dimAt(e.screen) ? 'text' : 'default';
-    const c = this.candidates(e);
-    if (c.join() !== this.lastCands.join()) { this.cycle = 0; this.lastCands = c; }
-    vp.hover = c[this.cycle % Math.max(1, c.length)] ?? null;
+    const c = this.cycleCands(e);
+    if (JSON.stringify(c) !== JSON.stringify(this.lastCands)) { this.cycle = 0; this.lastCands = c; }
+    const cur = c[this.cycle % Math.max(1, c.length)] ?? null;
+    vp.hover = Array.isArray(cur) ? cur[0] : cur;
+    vp.hoverSet = Array.isArray(cur) ? new Set(cur) : null;
     if (vp.hover) {
       const el = app.doc.get(vp.hover);
       const def = el && catDef(el.cat);
@@ -67,6 +75,12 @@ export class SelectTool extends Tool {
     }
     const dh = vp.dimAt(e.screen);
     if (dh) { vp.editTempDim(dh); return; }
+    if (vp.hoverSet && vp.hoverSet.size > 1) {
+      const ids = [...vp.hoverSet] as Id[];
+      app.select(ids, e.ctrl ? 'add' : e.shift ? 'remove' : 'set');
+      this.drag = { kind: 'move', s: e.p, started: false, ids: [...app.selection] };
+      return;
+    }
     const hit = vp.hover ?? this.candidates(e)[0] ?? null;
     if (hit) {
       if (e.ctrl) { app.select([hit], 'add'); return; }
@@ -132,7 +146,12 @@ export class SelectTool extends Tool {
     if (e.key === 'Tab' && this.lastCands.length > 1) {
       this.cycle++;
       const vp: any = app.active;
-      if (vp) { vp.hover = this.lastCands[this.cycle % this.lastCands.length]; vp.redrawOverlay(); }
+      if (vp) {
+        const cur = this.lastCands[this.cycle % this.lastCands.length];
+        vp.hover = Array.isArray(cur) ? cur[0] : cur; vp.hoverSet = Array.isArray(cur) ? new Set(cur) : null;
+        vp.redrawOverlay();
+        if (Array.isArray(cur)) { app.statusText = `Wandkette (${cur.length} Wände)`; app.emit('status'); }
+      }
       return true;
     }
     return false;
@@ -170,6 +189,21 @@ export class SelectTool extends Tool {
     }
     void vp;
   }
+}
+
+/** Über Endpunkte verbundene Wände */
+export function wallChain(id: Id): Id[] {
+  const walls = app.doc.all<any>('wall');
+  const near = (p: V2, q: V2) => Math.abs(p.x - q.x) < 2 && Math.abs(p.y - q.y) < 2;
+  const seen = new Set<Id>([id]); const stack = [id];
+  while (stack.length) {
+    const w = app.doc.get<any>(stack.pop()!); if (!w) continue;
+    for (const o of walls) {
+      if (seen.has(o.id)) continue;
+      if (near(w.a, o.a) || near(w.a, o.b) || near(w.b, o.a) || near(w.b, o.b)) { seen.add(o.id); stack.push(o.id); }
+    }
+  }
+  return [...seen];
 }
 
 export function isEditableIn(el: El, view: View): boolean { return !el.viewId || el.viewId === view.id; }
