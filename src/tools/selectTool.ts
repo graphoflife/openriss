@@ -6,12 +6,12 @@ import type { Id, El } from '../core/doc';
 import { V2, dist, sub, translation } from '../core/geom';
 import { catDef, emitHook, Grip } from '../core/registry';
 import type { DisplayList } from '../render/displayList';
-import { transformElements } from './ops';
+import { transformElements, copyTransform } from './ops';
 import type { View } from '../core/view';
 
 type Drag =
   | { kind: 'box'; s: V2; c: V2; additive: boolean; remove: boolean }
-  | { kind: 'move'; s: V2; started: boolean; ids: Id[] }
+  | { kind: 'move'; s: V2; started: boolean; ids: Id[]; copy?: boolean }
   | { kind: 'grip'; el: El; grip: Grip; started: boolean; s: V2 };
 
 export class SelectTool extends Tool {
@@ -83,8 +83,9 @@ export class SelectTool extends Tool {
     }
     const hit = vp.hover ?? this.candidates(e)[0] ?? null;
     if (hit) {
-      if (e.ctrl) { app.select([hit], 'add'); return; }
       if (e.shift) { app.select([hit], 'remove'); return; }
+      // Strg+Ziehen kopiert (wie Revit); Strg+Klick fügt zur Auswahl hinzu
+      if (e.ctrl) { if (!app.selection.has(hit)) app.select([hit], 'add'); this.drag = { kind: 'move', s: e.p, started: false, ids: [...app.selection], copy: true }; return; }
       if (!app.selection.has(hit)) app.select([hit]);
       this.drag = { kind: 'move', s: e.p, started: false, ids: [...app.selection] };
       return;
@@ -100,7 +101,7 @@ export class SelectTool extends Tool {
     if (!(d as any).started) {
       if (pxMoved < 4) return;
       (d as any).started = true;
-      doc.beginLive(d.kind === 'grip' ? 'Griff ziehen' : 'Verschieben');
+      doc.beginLive(d.kind === 'grip' ? 'Griff ziehen' : d.copy ? 'Kopieren' : 'Verschieben');
     }
     if (d.kind === 'grip') {
       doc.liveUpdate(() => {
@@ -111,7 +112,10 @@ export class SelectTool extends Tool {
       });
     } else if (d.kind === 'move') {
       const delta = sub(e.p, d.s);
-      doc.liveUpdate(() => { transformElements(d.ids, translation(delta.x, delta.y), e.view); });
+      doc.liveUpdate(() => {
+        if (d.copy) copyTransform(d.ids.filter((id) => !app.doc.get(id)?.pinned), translation(delta.x, delta.y), e.view);
+        else transformElements(d.ids, translation(delta.x, delta.y), e.view);
+      });
     }
   }
 
