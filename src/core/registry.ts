@@ -118,7 +118,9 @@ export interface CategoryDef {
   /** Wie drawPlan, aber alle sichtbaren Elemente der Kategorie auf einmal (z.B. Wände für saubere Verbindungen) */
   drawPlanBatch?(ctx: PlanCtx, els: El[]): void;
   /** Öffnung im Host (Tür/Fenster/Wandöffnung): Bereich entlang der Host-Achse (u) und Höhe (z, absolut) */
-  hostOpening?(el: El, doc: Doc): { u0: number; u1: number; z0: number; z1: number; cutsPlan?: boolean } | null;
+  hostOpening?(el: El, doc: Doc): { u0: number; u1: number; z0: number; z1: number; cutsPlan?: boolean; profile?: { u: number; z: number }[] } | null;
+  /** IFC-Zuordnung (Entität, vordefinierter Typ, Eigenschaftssätze) für den IFC-Export */
+  ifc?(el: El, doc: Doc): { entity: string; predefined?: string; name?: string; psets?: Record<string, Record<string, string | number | boolean>> } | null;
   /** Darstellung in Schnitt/Ansicht zusätzlich oder statt Solids (z.B. Ebenenlinien) */
   drawSection?(ctx: SectionCtx, el: El): void;
   /** Ansichtsspezifische Elemente (Beschriftung) – Koordinaten in Ansichtssystem */

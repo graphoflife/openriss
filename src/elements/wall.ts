@@ -51,7 +51,25 @@ const topProviders: WallTopProvider[] = [];
 export function registerWallTopProvider(p: WallTopProvider): void { topProviders.push(p); }
 
 /** Erweiterungspunkt: Öffnung (Tür, Fenster, Wandöffnung) im Host – Bereich entlang der Wandachse. */
-export interface HostOpening { u0: number; u1: number; z0: number; z1: number; /** im Grundriss schneiden */ cutsPlan?: boolean }
+export interface HostOpening {
+  u0: number; u1: number; z0: number; z1: number;
+  /** im Grundriss schneiden */ cutsPlan?: boolean;
+  /** beliebige Öffnungsform (z.B. Kernbohrung): geschlossenes Polygon in (u entlang Wandachse, z absolut); u0..z1 = Umgebungsrechteck */
+  profile?: { u: number; z: number }[];
+}
+
+/** Ausdehnung einer Öffnung entlang der Wand auf Höhe z (null = nicht geschnitten) */
+export function openingSpanAt(o: HostOpening, z: number): [number, number] | null {
+  if (!o.profile || o.profile.length < 3) return o.z0 <= z && o.z1 >= z ? [o.u0, o.u1] : null;
+  const us: number[] = [];
+  const P = o.profile;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    if ((a.z - z) * (b.z - z) <= 0 && a.z !== b.z) us.push(a.u + ((z - a.z) / (b.z - a.z)) * (b.u - a.u));
+  }
+  if (us.length < 2) return null;
+  return [Math.min(us[0], ...us.slice(1)), Math.max(us[0], ...us.slice(1))];
+}
 
 // ------------------------------------------------------------ Geometrie
 export function wallType(doc: Doc, w: Wall): WallType | undefined { return doc.get<WallType>(w.typeId); }
@@ -267,9 +285,9 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
     // Basislinie (unsichtbar) für Fang an Wandenden/-achsen
     dl.line(w.a, w.b, { w: 1 }, { inv: true, sub: 'loc' });
     // Öffnungen abziehen
-    const ops = wallOpenings(doc, w).filter((o) => o.cutsPlan !== false && o.z0 <= ctx.cutZ && o.z1 >= ctx.cutZ);
+    const spans = wallOpenings(doc, w).filter((o) => o.cutsPlan !== false).map((o) => openingSpanAt(o, ctx.cutZ)).filter((x): x is [number, number] => !!x && x[1] - x[0] > 1);
     let body: MultiPoly = [[ring]];
-    if (ops.length) body = difference([ring], ...ops.map((o) => [openingRect(wi, o.u0, o.u1)]));
+    if (spans.length) body = difference([ring], ...spans.map(([a, b]) => [openingRect(wi, a, b)]));
     const t = wallType(doc, w);
     if (ctx.detail === 'coarse' || !t || t.layers.length <= 1) {
       const core = t?.layers.find((l) => l.core) ?? t?.layers[0];
@@ -410,11 +428,13 @@ function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: numb
     } else outer = [{ x: 0, y: z0 }, { x: L, y: z0 }, { x: L, y: z1 }, { x: 0, y: z1 }];
     let polys: MultiPoly = [[outer]];
     if (parallel && opRects.length) {
+      const sOf = (u: number) => dot(sub(add(wi.c0, mul(wi.d, u)), p), e);
       const holes = opRects.map((o) => {
-        const sa = dot(sub(add(wi.c0, mul(wi.d, o.u0)), p), e), sb = dot(sub(add(wi.c0, mul(wi.d, o.u1)), p), e);
+        if (o.profile && o.profile.length >= 3) return [o.profile.map((q) => ({ x: sOf(q.u), y: Math.max(z0, Math.min(z1, q.z)) }))] as Poly;
+        const sa = sOf(o.u0), sb = sOf(o.u1);
         const s0 = Math.min(sa, sb), s1 = Math.max(sa, sb);
         return [[{ x: s0, y: o.z0 }, { x: s1, y: o.z0 }, { x: s1, y: o.z1 }, { x: s0, y: o.z1 }]] as Poly;
-      }).filter((h) => h[0][1].x > 0 && h[0][0].x < L);
+      }).filter((h) => Math.max(...h[0].map((q) => q.x)) > 0 && Math.min(...h[0].map((q) => q.x)) < L);
       if (holes.length) polys = difference([outer], ...holes);
     }
     for (const pl of polys) {
@@ -428,6 +448,15 @@ function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: numb
   for (const o of opRects) {
     const R = (u: number, z: number) => at3(add(add(wi.c0, mul(wi.d, u)), mul(wi.n, oMin)), z);
     const Lp = (u: number, z: number) => at3(add(add(wi.c0, mul(wi.d, u)), mul(wi.n, oMax)), z);
+    if (o.profile && o.profile.length >= 3) {
+      // Leibung je Profilkante (Profil gegen den Uhrzeigersinn in u/z)
+      const pr = signedArea(o.profile.map((q) => ({ x: q.u, y: q.z }))) > 0 ? o.profile : o.profile.slice().reverse();
+      for (let i = 0; i < pr.length; i++) {
+        const A = pr[i], B = pr[(i + 1) % pr.length];
+        faces.push({ pts: [R(A.u, A.z), R(B.u, B.z), Lp(B.u, B.z), Lp(A.u, A.z)] });
+      }
+      continue;
+    }
     faces.push({ pts: [R(o.u0, o.z0), Lp(o.u0, o.z0), Lp(o.u0, o.z1), R(o.u0, o.z1)] });
     faces.push({ pts: [Lp(o.u1, o.z0), R(o.u1, o.z0), R(o.u1, o.z1), Lp(o.u1, o.z1)] });
     if (o.z0 > z0 + 0.5) faces.push({ pts: [R(o.u0, o.z0), R(o.u1, o.z0), Lp(o.u1, o.z0), Lp(o.u0, o.z0)] });
