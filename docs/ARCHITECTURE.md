@@ -134,6 +134,8 @@ Weitere Erweiterungspunkte: `registerViewport({ kinds, create })` (eigene Ansich
 | `structure` | Stützen, Träger, Fundamente, Stabbewehrung, Bügel, Flächen- und Mattenbewehrung, Betondeckung, Stahlliste; Schweiz: Bewehrungsnorm DIN/SIA, SSHV-Formkatalog (`rebar/sshv.ts`), Positionen je Bewehrungsplan, Eisenliste nach SSHV, ABS-Export BVBS 3.1 (`steel.ts`, `eisenliste.ts`) |
 | `output` | Pläne mit Plankopf, Ansichtsfenster, Bauteillisten, Drucken/PDF, SVG/PNG/DXF-Export, DXF-Import, Bilder, Detailausschnitte |
 | `view3d` | 3D-Ansicht (three.js), ViewCube, Schnittbereich, glTF-/OBJ-Export, IFC4-Export (`ifc.ts`: Rohbauteile als Extrusion mit Öffnungen und Schichtaufbau, `ifcRebar.ts`: Bewehrung stabweise, `ifcCh.ts`: Schweizer Betonangaben) |
+| `embeds` | Einlagen (Fugenblech, Rückbiegeanschluss, Muffenstab, Durchstanzbewehrung, Ankerschiene, Futterrohr, Einlegerohre), Arbeitsfugen und Etappen, Kernbohrungen, Dämmzonen mit Pressungen, Fertigteil-Lichtschacht |
 | `sample` | Beispielprojekt |
 
 Module kommunizieren ausschließlich über die Registry, Hooks und gemeinsame Elementfelder.
+Alle Module sind ohne DOM ladbar (`src/registerModules.ts`); `src/api.ts` ist der Einstieg für Skripte und die CLI (siehe docs/API.md).

@@ -575,7 +575,10 @@ export function flipWall(w: Wall): Partial<Wall> {
 export function wallArea(doc: Doc, w: Wall): number {
   const wi = wallInfo(doc, w);
   let a = wi.L * (wi.z1 - wi.z0);
-  for (const o of wallOpenings(doc, w)) a -= (o.u1 - o.u0) * (Math.min(o.z1, wi.z1) - Math.max(o.z0, wi.z0));
+  for (const o of wallOpenings(doc, w)) {
+    if (o.profile && o.profile.length >= 3) a -= Math.abs(signedArea(o.profile.map((q) => ({ x: q.u, y: Math.max(wi.z0, Math.min(wi.z1, q.z)) }))));
+    else a -= (o.u1 - o.u0) * (Math.min(o.z1, wi.z1) - Math.max(o.z0, wi.z0));
+  }
   return Math.max(0, a);
 }
 
