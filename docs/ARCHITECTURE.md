@@ -121,3 +121,16 @@ Befehl mit der vereinbarten ID registrieren; nicht registrierte IDs werden ausge
 Weitere Erweiterungspunkte: `registerViewport({ kinds, create })` (eigene Ansichtsarten, z. B. 3D/Bauteilliste),
 `registerDLBuilder(kind, fn)` (Display-Liste für z. B. Pläne), `registerBrowserSection(...)`,
 `registerWallTopProvider(fn)` (Wand oben an Dach fixieren).
+
+## Fachmodule (`src/modules/`)
+
+| Modul | Inhalt |
+|---|---|
+| `annotation` | Bemaßungen (ausgerichtet, linear, Winkel, Radius, Bogenlänge), Höhenkoten, Text, Beschriftungen, Raumstempel, Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Symbole |
+| `architecture` | Geschossdecken, Decken, Dächer (inkl. Wände oben fixieren), Treppen, Geländer, Bauteile/Möbel, Räume, Raumtrennung, Wand-/Schacht-/Deckenöffnungen |
+| `structure` | Stützen, Träger, Fundamente, Stabbewehrung, Bügel, Flächen- und Mattenbewehrung, Betondeckung, Stahlliste |
+| `output` | Pläne mit Plankopf, Ansichtsfenster, Bauteillisten, Drucken/PDF, SVG/PNG/DXF-Export, DXF-Import, Bilder, Detailausschnitte |
+| `view3d` | 3D-Ansicht (three.js), ViewCube, Schnittbereich, IFC4-, glTF- und OBJ-Export |
+| `sample` | Beispielprojekt |
+
+Module kommunizieren ausschließlich über die Registry, Hooks und gemeinsame Elementfelder.
