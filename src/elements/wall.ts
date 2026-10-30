@@ -4,7 +4,7 @@ import type { Doc, El, Id } from '../core/doc';
 import {
   V2, add, sub, mul, dot, norm, perp, dist, lerp, eq, lineLine, projectT, sideDist, cross,
   Ring, Poly, MultiPoly, difference, intersection, signedArea, ensureCCW, segRect, angleOf, pointInRing,
-  distToSeg, apply, Mat2, isMirror, mid, closestOnLine, V3,
+  distToSeg, apply, Mat2, isMirror, mid, closestOnLine, V3, bboxOf, boxInflate, boxOverlap, clipRingHalfPlane,
 } from '../core/geom';
 import { registerCategory, catDef, CategoryDef, PlanCtx, Solid, Face, PropDef, GROUPS, TempDim, Grip, emitHook } from '../core/registry';
 import { TypeEl, levelElev, levelOptions, Material, materialOf, View, isPlanLike, levels } from '../core/view';
@@ -260,6 +260,7 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
     }
   }
   const rings = cutWalls.map((c) => c.ring);
+  const boxes = rings.map((r) => boxInflate(bboxOf(r), 2));
   for (let i = 0; i < cutWalls.length; i++) {
     const { w, wi, ring } = cutWalls[i];
     dl.begin(w.id);
@@ -281,12 +282,14 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
       const L = layerOffsets(doc, w);
       const far = wi.L + wi.T * 20 + 10000;
       for (const { lay, o0, o1 } of L) {
-        const a0 = sub(wi.c0, mul(wi.d, far)), b0 = add(wi.c1, mul(wi.d, far));
-        const band: Ring = [add(a0, mul(wi.n, o0)), add(b0, mul(wi.n, o0)), add(b0, mul(wi.n, o1)), add(a0, mul(wi.n, o1))];
-        const strip = intersection(body, [band]);
+        // Schichtstreifen: Körper an den beiden Schichtgrenzen (Halbebenen) clippen
+        const p0 = add(wi.c0, mul(wi.n, o0)), p1 = add(wi.c0, mul(wi.n, o1));
         const m = materialOf(doc, lay.mat);
         const fill = cutFill(m?.cutPattern, m?.cutColor, ctx.detail);
-        for (const p of strip) dl.fill(p, fill, undefined);
+        for (const p of body) {
+          const rings = p.map((r) => clipRingHalfPlane(clipRingHalfPlane(r, p0, wi.d), p1, mul(wi.d, -1))).filter((r) => r.length >= 3);
+          if (rings.length) dl.fill(rings, fill, undefined);
+        }
       }
       // innere Schichtgrenzen (dünn)
       for (let j = 1; j < L.length; j++) {
@@ -296,7 +299,7 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
       }
     }
     // Umriss (ohne Kanten, die in verbundenen Wänden liegen)
-    const others = rings.filter((_, j) => j !== i);
+    const others = rings.filter((_, j) => j !== i && boxOverlap(boxes[i], boxes[j]));
     for (const [a, b] of edgesOf(body)) {
       for (const [p, q] of visibleParts(a, b, others)) dl.line(p, q, cutPen, { sub: faceSub(wi, p, q) });
     }
