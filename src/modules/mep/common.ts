@@ -2,7 +2,7 @@
 // Farbe, Linienart und Kürzel, Leitungs-/Apparatetypen der Vorlage, Höhenband der Grundrisse, 3D-Hilfen.
 import type { Doc, El, Id } from '../../core/doc';
 import { registerCategory, onHook, GROUPS, PropDef, Face, PlanCtx } from '../../core/registry';
-import { TypeEl, typesOf, levelElev, levelAbove, View } from '../../core/view';
+import { TypeEl, typesOf, levelElev, levelAbove, View, projectInfo } from '../../core/view';
 import { V2, V3, add3, sub3, mul3, dot3, cross3, norm3, len3, signedArea } from '../../core/geom';
 import { DASH_LABELS, DashName, OBJECT_STYLES, Pen } from '../../render/styles';
 import { fmtNum } from '../../core/units';
@@ -226,3 +226,26 @@ export function boxFaces(ring: V2[], z0: number, z1: number): Face[] {
 }
 
 export { dot3, sub3, add3, mul3, norm3, len3, cross3 };
+
+// ------------------------------------------------------------ Beschriftungsformate (Platzhalter)
+/**
+ * Beschriftung aus Format und Werten: «{name} · VA {va} cm · {len} m». Leere Platzhalter entfallen samt
+ * angrenzendem Trenner (« · », « / », «, »). Format: Element `tagFmt` → Projekt `tagFormats[cat]` → Vorgabe.
+ */
+export function fillTag(fmt: string, vals: Record<string, string | number | undefined | null>): string {
+  const val = (k: string) => { const v = vals[k]; return v === undefined || v === null ? '' : String(v); };
+  // Abschnitte zwischen Trennern: ein Abschnitt, dessen Platzhalter alle leer sind, entfällt ganz
+  const parts = fmt.split(/(\s+(?:·|\/|,|\|)\s+)/);
+  const segs: { text: string; sep: string }[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const seg = parts[i]; const keys = [...seg.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((m) => m[1]);
+    if (keys.length && keys.every((k) => !val(k))) continue;
+    // leerer Platzhalter innerhalb des Abschnitts: folgende Einheit (« cm», « %», « l/h») mit entfernen
+    const text = seg.replace(/\{([a-zA-Z0-9_]+)\}(\s?[A-Za-zÄÖÜäöü%²³°/]+(?=$|[\s)\]]))?/g, (_m, k, unit) => (val(k) ? val(k) + (unit ?? '') : ''));
+    segs.push({ text, sep: parts[i - 1] ?? '' });
+  }
+  return segs.map((sg, i) => (i ? sg.sep : '') + sg.text).join('').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+export function tagFormatOf(doc: Doc, el: El, def: string): string {
+  return el.tagFmt || projectInfo(doc)?.tagFormats?.[el.cat] || def;
+}

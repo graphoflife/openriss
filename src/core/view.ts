@@ -115,6 +115,8 @@ export interface ProjectInfo extends El {
   units?: { length: 'mm' | 'cm' | 'm'; decimals: number };
   /** Projektweite Objektstil-Überschreibungen */
   objStyles?: Record<string, { proj?: number; cut?: number; color?: string }>;
+  /** Beschriftungsformate je Kategorie (Platzhalter in {…}, z.B. fbh: '{name} · VA {va} cm · {len} m · {power} W') */
+  tagFormats?: Record<string, string>;
   /** Bewehrungsüberdeckung (mm) */
   rebarCover?: number;
   /** Landesvorlage: Vorgaben für Bemaßungstyp, Höhenkoten, Plankopf (fehlt = 'DE') */

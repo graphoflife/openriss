@@ -16,7 +16,10 @@ import { makeTag, tagsOf } from '../annotation/tags';
 import { Disc, DISC_LABEL, ensureMepTemplate } from './common';
 import { RunTool, RiserTool, RUN_CATS, MepRun, applySlope, runInfo, RunCat } from './runs';
 import { FixtureTool, FixSym } from './fixtures';
-import { startFbhSketch, FbhRoomTool } from './fbh';
+import { startFbhSketch, FbhRoomTool, numberCircuits } from './fbh';
+export { numberCircuits, fbhFlow, fbhTagText } from './fbh';
+export { addEarthing, earthPathsForSlab } from './earthing';
+import './earthing';
 import { SchemaSymbolTool, SchemaLineTool, createSchemaView, autoHeatingSchema } from './schema';
 import { findPenetrations, applyPenetrations, penSizeText, PEN_KIND_LABEL, PenOpts } from './penetrations';
 
@@ -116,18 +119,23 @@ registerCommand({
   run: () => { const v = app.activeView(); if (!v) return; let n = 0; app.doc.transaction('Leitungen beschriften', () => { n = tagRuns(app.doc, v); }); app.status(`${n} Beschriftung(en) erstellt.`); },
 });
 
+registerCommand({
+  id: 'mepFbhNumber', label: 'Heizkreise nummerieren', icon: 'mepFbh', tip: 'Heizkreise je Verteiler neu nummerieren (nach Abstand zum Verteiler; mehrere Verteiler: «HK 2.03»).',
+  run: () => { let n = 0; app.doc.transaction('Heizkreise nummerieren', () => { n = numberCircuits(app.doc); }); app.status(`${n} Heizkreis(e) umbenannt.`); },
+});
+
 // ------------------------------------------------------------ Multifunktionsleiste
 const T = 'Gebäudetechnik';
-registerPanel(T, 'Heizung', ['mepPipeH', 'mepFbh', 'mepFbhRoom', 'mepManifold', 'mepRadiator', 'mepHeatPump'], 10);
+registerPanel(T, 'Heizung', ['mepPipeH', 'mepFbh', 'mepFbhRoom', 'mepFbhNumber', 'mepManifold', 'mepRadiator', 'mepHeatPump'], 10);
 registerPanel(T, 'Lüftung', ['mepDuct', 'mepVent', 'mepAhu'], 20);
 registerPanel(T, 'Sanitär', ['mepPipeS', 'mepDrain', 'mepRiser', 'mepFloorDrain', 'mepConn', 'mepSanitary', 'mepTank'], 30);
-registerPanel(T, 'Elektro', ['mepConduit', 'mepTray', 'mepEarth', 'mepSocket', 'mepSwitch', 'mepLight', 'mepBoard', 'mepFixture'], 40);
+registerPanel(T, 'Elektro', ['mepConduit', 'mepTray', 'earthing', 'mepSocket', 'mepSwitch', 'mepLight', 'mepBoard', 'mepFixture'], 40);
 registerPanel(T, 'Schema', ['mepSchema', 'schemaSymbol', 'schemaLine', 'mepSchemaAuto'], 50);
 registerPanel(T, 'Koordination', ['mepPenetrations', 'mepSlope', 'mepTag', 'mepRunList', 'mepViews'], 60);
 registerContextPanel({ cats: ['pipe'], panel: 'Rohr', items: ['mepSlope'] });
 registerContextPanel({ cats: ['pipe', 'duct', 'conduit'], panel: 'Leitung', items: ['mepTag', 'mepPenetrations'] });
 registerSimilar('pipe', 'mepPipeS'); registerSimilar('duct', 'mepDuct'); registerSimilar('conduit', 'mepConduit');
-registerSimilar('mepFixture', 'mepFixture'); registerSimilar('fbh', 'mepFbh'); registerSimilar('schemaSym', 'schemaSymbol'); registerSimilar('schemaLine', 'schemaLine');
+registerSimilar('mepFixture', 'mepFixture'); registerSimilar('fbh', 'mepFbh'); registerSimilar('earthing', 'earthing'); registerSimilar('schemaSym', 'schemaSymbol'); registerSimilar('schemaLine', 'schemaLine');
 
 // ------------------------------------------------------------ Durchbrüche: Dialog
 function penetrationDialog(): void {
@@ -185,9 +193,23 @@ export function createRunSchedules(doc: Doc): View[] {
   out.push(mk('pipe', 'Leitungsliste Rohre', runList));
   out.push(mk('duct', 'Leitungsliste Lüftungskanäle', runList));
   out.push(mk('conduit', 'Leitungsliste Leerrohre / Trassen', runList));
-  out.push(mk('fbh', 'Heizkreise', { fields: ['name', 'room', 'area', 'spacing', 'length', 'power', 'manifold'], sort: [{ key: 'manifold' }, { key: 'name' }], itemize: true, footer: true, header: true, sums: ['area', 'length', 'power'] }));
+  out.push(mk('fbh', 'Heizkreise', { fields: ['name', 'room', 'area', 'spacing', 'length', 'power', 'flow', 'manifold'], sort: [{ key: 'manifold' }, { key: 'name' }], itemize: true, footer: true, header: true, sums: ['area', 'length', 'power', 'flow'] }));
+  if (doc.all('earthing').length) out.push(mk('earthing', 'Fundamenterder', { fields: ['host', 'werkstoff', 'dia', 'length', 'lugs'], sort: [{ key: 'host' }], itemize: true, sums: ['length', 'lugs'] }));
   out.push(mk('mepFixture', 'HLKSE-Elemente', { fields: ['disc', 'type', 'level', 'count'], sort: [{ key: 'disc' }, { key: 'type' }, { key: 'level' }], itemize: false, sums: [] }));
   return out;
+}
+
+/** Heizkreistabelle je FBH-Verteiler (Kreis, Raum, Fläche, VA, Länge, Leistung, Volumenstrom, Summe) – zum Platzieren im Plan */
+export function createHeatingTable(doc: Doc, manifoldId?: Id): View[] {
+  const manis = doc.all('mepFixture').filter((f) => (doc.get(f.typeId) as any)?.sym === 'manifold' && (!manifoldId || f.id === manifoldId));
+  return manis.map((m) => {
+    const label = m.label ?? (doc.get(m.typeId) as any)?.label ?? 'Verteiler';
+    return doc.add<View>({
+      id: newId('vw'), cat: 'view', kind: 'schedule', name: `Heizkreistabelle ${label} (${doc.get(m.levelId)?.name ?? ''})`.trim(), scale: 1, detail: 'medium',
+      data: { cat: 'fbh', fields: ['name', 'room', 'area', 'spacing', 'length', 'power', 'flow'], sort: [{ key: 'name' }], itemize: true, totals: true, footer: false, sums: ['area', 'length', 'power', 'flow'],
+        filters: [{ key: 'manifoldId', op: 'eq', value: m.id }], labels: { name: 'Kreis', spacing: 'VA', length: 'Länge' } },
+    } as View);
+  });
 }
 
 const HALFTONE_CATS = ['wall', 'door', 'window', 'opening', 'floor', 'ceiling', 'roof', 'stair', 'railing', 'component', 'column', 'beam', 'foundation', 'room', 'shaft', 'roomsep'];

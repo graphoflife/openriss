@@ -20,6 +20,7 @@ import { placementFor, rememberProto, activeLevelId } from '../../tools/elementT
 import {
   MepSystem, sysOf, sysPen, systemOptions, CAT_DISC, DEFAULT_SYS, planBand, discVisible, sweep, circleProfile, rectProfile,
   add3, sub3, mul3, dot3, norm3, len3, fmtMm,
+  fillTag, tagFormatOf,
 } from './common';
 
 export type RunCat = 'pipe' | 'duct' | 'conduit';
@@ -327,6 +328,7 @@ export function runProps(el: El, doc: Doc): PropDef[] {
       } },
   ];
   if (cat === 'pipe') p.push({ key: 'slope', label: 'Gefälle (%)', group: g.constraints, type: 'number', get: (e) => e.slope ?? 0, set: (_e, v) => ({ slope: v || undefined, offsetB: undefined }) });
+  p.push({ key: 'tagFmt', label: 'Beschriftung ' + RUN_TAG_KEYS, group: g.text, type: 'text', get: (e) => e.tagFmt ?? '', set: (_e, v) => ({ tagFmt: v || undefined }) });
   p.push(
     { key: 'system', label: 'Systemtyp', group: M, type: 'select', options: (d) => systemOptions(d, CAT_DISC[cat]), get: (e, d) => sysOf(d, e).id, set: (_e, v) => ({ system: v }) },
     { key: 'sysAbbr', label: 'Systemkürzel', group: M, type: 'readonly', get: (e, d) => sysOf(d, e).abbr },
@@ -364,11 +366,16 @@ function runTypeProps(cat: RunCat): PropDef[] {
   return p;
 }
 
+/** Vorgabe-Beschriftung Leitung: Systemkürzel, Grösse (DN/Ø/B×H), Gefälle */
+export const RUN_TAG = '{sys} {size} {slope}';
+export const RUN_TAG_KEYS = '{sys} {system} {size} {slope} {len} {type} {werkstoff} {offset}';
 function tagText(el: El, doc: Doc): string {
-  const sys = sysOf(doc, el);
-  let s = `${sys.abbr} ${sizeLabel(doc, el)}`.trim();
-  if (el.cat === 'pipe' && el.slope) s += ` ${fmtNum(Math.abs(el.slope), 1).replace(/[.,]0$/, '')} %`;
-  return s;
+  const sys = sysOf(doc, el); const t = doc.get(el.typeId);
+  return fillTag(tagFormatOf(doc, el, RUN_TAG), {
+    sys: sys.abbr, system: sys.name, size: sizeLabel(doc, el), type: t?.name, werkstoff: t?.werkstoff,
+    slope: el.cat === 'pipe' && el.slope ? fmtNum(Math.abs(el.slope), 1).replace(/[.,]0$/, '') + ' %' : '',
+    len: fmtNum(runInfo(doc, el).L / 1000, 2) + ' m', offset: fmtNum((el.offset ?? 0) / 1000, 2),
+  });
 }
 
 const IFC_ENT: Record<RunCat, string> = { pipe: 'IfcPipeSegment', duct: 'IfcDuctSegment', conduit: 'IfcCableCarrierSegment' };

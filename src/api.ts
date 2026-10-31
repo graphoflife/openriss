@@ -275,3 +275,6 @@ export const addSchemaSym = tx('Schemasymbol', mep.addSchemaSym);
 export const addSchemaLine = tx('Schemalinie', mep.addSchemaLine);
 export const autoHeatingSchema = tx('Heizungsschema', mep.autoHeatingSchema);
 export const applyPenetrations = tx('Durchbrüche', mep.applyPenetrations);
+export const createHeatingTable = tx('Heizkreistabelle', mep.createHeatingTable);
+export const numberCircuits = tx('Heizkreise nummerieren', mep.numberCircuits);
+export const addEarthing = tx('Fundamenterder', mep.addEarthing);

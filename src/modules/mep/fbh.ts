@@ -18,7 +18,7 @@ import { placementFor, rememberProto, activeLevelId } from '../../tools/elementT
 import { startTool } from '../../ui/commands';
 import { regionAt } from '../architecture/room';
 import { loopGrips, dragLoopGrip, transformLoops, moveLoops } from '../architecture/common';
-import { sysOf, sysPen, systemOptions, planBand, discVisible, sweep, circleProfile } from './common';
+import { sysOf, sysPen, systemOptions, planBand, discVisible, sweep, circleProfile, fillTag, tagFormatOf } from './common';
 import { fixPos, FixType } from './fixtures';
 
 export interface FbhCircuit extends El {
@@ -41,7 +41,14 @@ export interface FbhCircuit extends El {
   name?: string;
   /** spezifische Heizleistung W/m² */
   q?: number;
+  /** Spreizung Vorlauf/Rücklauf (K) für den Volumenstrom */
+  dT?: number;
+  /** Beschriftungsformat (Platzhalter siehe FBH_TAG_KEYS) */
+  tagFmt?: string;
 }
+/** Vorgabe-Beschriftung Heizkreis: Kreisnummer, Verlegeabstand, Länge, Leistung */
+export const FBH_TAG = '{name} · VA {va} cm · {len} m · {power} W';
+export const FBH_TAG_KEYS = '{name} {room} {va} {len} {area} {power} {flow} {manifold}';
 
 export interface FbhLayout { path: V2[]; conVL: V2[]; conRL: V2[]; area: number; field: number; conn: number; length: number; ok: boolean }
 
@@ -244,6 +251,37 @@ export function fbhLayout(doc: Doc, c: El): FbhLayout {
   return c.id ? cached(doc, 'mepFbh', c.id, calc) : calc();
 }
 export const fbhPower = (doc: Doc, c: El) => (fbhLayout(doc, c).area / 1e6) * (c.q ?? 30);
+/** Volumenstrom (l/h) = P / (1.163 Wh/(l·K) · ΔT) */
+export const fbhFlow = (doc: Doc, c: El) => fbhPower(doc, c) / (1.163 * Math.max(1, c.dT ?? 5));
+const manifoldLabel = (doc: Doc, c: El) => { const m = doc.get(c.manifoldId); return m ? m.label ?? doc.get<FixType>(m.typeId)?.label ?? '' : ''; };
+export function fbhTagText(doc: Doc, el: El): string {
+  const L = fbhLayout(doc, el);
+  return fillTag(tagFormatOf(doc, el, FBH_TAG), {
+    name: el.name ?? 'HK', room: roomOf(doc, el), va: fmtNum((el.spacing ?? 150) / 10, 0), len: fmtNum(L.length / 1000, 0),
+    area: fmtNum(L.area / 1e6, 1), power: fmtNum(fbhPower(doc, el), 0), flow: fmtNum(fbhFlow(doc, el), 0), manifold: manifoldLabel(doc, el),
+  });
+}
+/** Heizkreise je Verteiler nummerieren (nach Abstand zum Verteiler; mehrere Verteiler im Projekt: «HK 2.03») */
+export function numberCircuits(doc: Doc, levelId?: Id): number {
+  const cs = doc.all('fbh').filter((c) => !levelId || c.levelId === levelId);
+  const groups = new Map<string, El[]>();
+  for (const c of cs) { const k = c.manifoldId ?? '_' + c.levelId; const g = groups.get(k) ?? groups.set(k, []).get(k)!; g.push(c); }
+  const manis = doc.all('mepFixture').filter((f) => doc.get<FixType>(f.typeId)?.sym === 'manifold');
+  const multi = manis.length > 1;
+  let n = 0;
+  for (const [k, list] of groups) {
+    const m = doc.get(k);
+    const mp = m ? fixPos(doc, m).p : null;
+    const ip = (c: El) => interiorPoint(c.loops as Poly);
+    list.sort((a, b) => (mp ? dist(ip(a), mp) - dist(ip(b), mp) : ip(a).x - ip(b).x || ip(a).y - ip(b).y));
+    const mi = m ? manis.indexOf(m) + 1 : 0;
+    list.forEach((c, i) => {
+      const name = multi && mi ? `HK ${mi}.${String(i + 1).padStart(2, '0')}` : `HK ${i + 1}`;
+      if (c.name !== name) { doc.update(c.id, { name }); n++; }
+    });
+  }
+  return n;
+}
 
 // ------------------------------------------------------------ Darstellung
 function drawFbh(dl: DisplayList, doc: Doc, c: El, detail: string, scale: number): void {
@@ -291,6 +329,9 @@ function fbhProps(): PropDef[] {
     { key: 'conn', label: 'Anbindeleitungen', group: g.dims, type: 'readonly', get: (e, d) => fmtNum(fbhLayout(d, e).conn / 1000, 1) + ' m' },
     { key: 'length', label: 'Kreislänge', group: g.dims, type: 'readonly', get: (e, d) => fmtNum(fbhLayout(d, e).length / 1000, 1) + ' m' },
     { key: 'power', label: 'Heizleistung', group: M, type: 'readonly', get: (e, d) => fmtNum(fbhPower(d, e), 0) + ' W' },
+    { key: 'dT', label: 'Spreizung ΔT (K)', group: M, type: 'number', get: (e) => e.dT ?? 5, set: (_e, v) => ({ dT: Math.max(1, v) }) },
+    { key: 'flow', label: 'Volumenstrom', group: M, type: 'readonly', get: (e, d) => fmtNum(fbhFlow(d, e), 0) + ' l/h' },
+    { key: 'tagFmt', label: 'Beschriftung ' + FBH_TAG_KEYS, group: g.text, type: 'text', get: (e) => e.tagFmt ?? '', set: (_e, v) => ({ tagFmt: v || undefined }) },
     { key: 'comments', label: 'Kommentare', group: g.identity, type: 'text', get: (e) => e.comments ?? '', set: (_e, v) => ({ comments: v }) },
   ];
 }
@@ -313,7 +354,7 @@ registerCategory({
   translate3d: (el, d) => ({ loops: moveLoops(el.loops, d), offset: (el.offset ?? -50) + d.z }),
   center: (el) => (el.loops?.length ? interiorPoint(el.loops as Poly) : null),
   props: () => fbhProps(),
-  tagText: (el, doc) => `${el.name ?? 'HK'} VA ${fmtNum((el.spacing ?? 150) / 10, 0)} cm ${fmtNum(fbhLayout(doc, el).length / 1000, 0)} m`,
+  tagText: (el, doc) => fbhTagText(doc, el),
   tagPoint: (el) => (el.loops?.length ? interiorPoint(el.loops as Poly) : null),
   scheduleFields: () => [
     { key: 'name', label: 'Heizkreis', get: (el) => el.name ?? '' },
@@ -322,11 +363,13 @@ registerCategory({
     { key: 'spacing', label: 'VA', unit: 'len', get: (el) => el.spacing ?? 150 },
     { key: 'length', label: 'Rohrlänge', unit: 'len', get: (el, doc) => fbhLayout(doc, el).length },
     { key: 'power', label: 'Leistung (W)', unit: 'num', get: (el, doc) => Math.round(fbhPower(doc, el)) },
-    { key: 'manifold', label: 'Verteiler', get: (el, doc) => { const m = doc.get(el.manifoldId); return m ? m.label ?? doc.get<FixType>(m.typeId)?.label ?? '' : ''; } },
+    { key: 'flow', label: 'Volumenstrom (l/h)', unit: 'num', get: (el, doc) => Math.round(fbhFlow(doc, el)) },
+    { key: 'manifold', label: 'Verteiler', get: (el, doc) => manifoldLabel(doc, el) },
+    { key: 'manifoldId', label: 'Verteiler-ID', get: (el) => el.manifoldId ?? '' },
   ],
   ifc: (el, doc) => {
     const L = fbhLayout(doc, el);
-    return { entity: 'IfcPipeSegment', predefined: 'FLEXIBLESEGMENT', name: `FBH ${el.name ?? ''}`.trim(), psets: { Pset_OpenRiss_HLKSE: { Heizkreis: el.name ?? '', Raum: roomOf(doc, el), Flaeche_m2: Math.round(L.area / 1e4) / 100, VA_mm: el.spacing ?? 150, Rohrlaenge_m: Math.round(L.length / 100) / 10, Leistung_W: Math.round(fbhPower(doc, el)), Muster: el.pattern ?? 'meander' } } };
+    return { entity: 'IfcPipeSegment', predefined: 'FLEXIBLESEGMENT', name: `FBH ${el.name ?? ''}`.trim(), psets: { Pset_OpenRiss_HLKSE: { Heizkreis: el.name ?? '', Raum: roomOf(doc, el), Flaeche_m2: Math.round(L.area / 1e4) / 100, VA_mm: el.spacing ?? 150, Rohrlaenge_m: Math.round(L.length / 100) / 10, Leistung_W: Math.round(fbhPower(doc, el)), Volumenstrom_lh: Math.round(fbhFlow(doc, el)), Muster: el.pattern ?? 'meander' } } };
   },
 });
 
