@@ -16,7 +16,7 @@ export const CAT_COLORS: Record<string, string> = {
   component: '#c8b090', room: '#9ec5ff',
 };
 /** Kategorien, die in 3D standardmäßig nicht dargestellt werden (wie in Revit) */
-export const HIDDEN_3D = new Set(['room', 'area', 'space']);
+export const HIDDEN_3D = new Set(['room', 'area', 'space', 'excavation']);
 
 /** Winkel, unter dem eine Kante zwischen zwei Flächen als „glatt“ gilt und nicht gezeichnet wird */
 const COS_SMOOTH = Math.cos((20 * Math.PI) / 180);
@@ -156,6 +156,21 @@ function normColor(c: string): string {
   try { return '#' + new THREE.Color(c).getHexString(); } catch { return '#cccccc'; }
 }
 
+/** Dreiecke/Kanten eines Solids – grosse Netze (z.B. Gelände, dessen Solid über Elementobjekte zwischengespeichert ist)
+ *  werden je Solid-Objekt und Szenenursprung wiederverwendet statt bei jeder Änderung neu trianguliert */
+const meshCache = new WeakMap<Solid, { o: V3; pos: number[]; nrm: number[]; edges: number[]; n: number }>();
+function meshOf(s: Solid, o: V3): { pos: number[]; nrm: number[]; edges: number[]; n: number } {
+  const c = meshCache.get(s);
+  if (c && c.o.x === o.x && c.o.y === o.y && c.o.z === o.z) return c;
+  const pos: number[] = [], nrm: number[] = [], edges: number[] = [];
+  let n = 0;
+  for (const f of s.faces) n += triangulateFace(f, o, pos, nrm);
+  solidEdges(s.faces, o, edges);
+  const r = { o: { ...o }, pos, nrm, edges, n };
+  if (s.faces.length > 400) meshCache.set(s, r);
+  return r;
+}
+
 /** Darstellbare Modellelemente der 3D-Ansicht */
 export function elements3d(doc: Doc, view: View): El[] {
   return viewElements(doc, view).model.filter((el) => el.cat !== 'view' && !HIDDEN_3D.has(el.cat));
@@ -198,12 +213,13 @@ export function buildSceneData(doc: Doc, view: View, els: El[] = elements3d(doc,
       if (gi === undefined) { gi = groups.push({ key, color: look.color, opacity: look.opacity, glass: look.glass, name: look.name, pos: [], nrm: [], owners: [] }) - 1; gIndex.set(key, gi); }
       const g = groups[gi];
       const start = g.pos.length;
-      let n = 0;
-      for (const f of s.faces) n += triangulateFace(f, origin, g.pos, g.nrm);
+      const m = meshOf(s, origin);
+      const n = m.n;
+      for (let i = 0; i < m.pos.length; i++) { g.pos.push(m.pos[i]); g.nrm.push(m.nrm[i]); }
       for (let i = 0; i < n; i++) g.owners.push(idx);
       for (let i = start; i < g.pos.length; i++) tris.push(g.pos[i]);
       if (n) parts.push({ g: gi, start, count: n * 9 });
-      solidEdges(s.faces, origin, edges);
+      for (let i = 0; i < m.edges.length; i++) edges.push(m.edges[i]);
     }
     for (let i = 0; i < edges.length; i++) allEdges.push(edges[i]);
     els3.set(it.el.id, { id: it.el.id, cat: it.el.cat, tris: new Float32Array(tris), edges: new Float32Array(edges), parts, min: it.min, max: it.max });
