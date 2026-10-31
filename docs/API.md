@@ -35,6 +35,7 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `syncStairBearings(id?)` | Treppenlager (`stairBearing`) nach Änderung der Lagerfelder einer bzw. aller Treppen nachführen |
 | `addRebarTag(rebarId, viewId, off?)`, `tagOnPlace(ids, viewId)` | Beschriftungen |
 | `addPlanView`, `addSection`, `addSheet`, `placeView(sheetId, viewId, center, detail?, { segFrom?, segCount?, scaleBar? })`, `addSchedule` | Ansichten, Pläne, Listen (bei umbrochenen Listen: gezeigte Abschnitte; `scaleBar`: Massstabsleiste im Titel) |
+| `addRamp({ a, b, levelId, offset?, endLevelId?, endOffset?, width?, maxPct?, transPct?, transLen?, typeId?, walls?, wallTypeId?, wallTop? })` | Rampe als eine geneigte Platte mit Übergängen und Trogwänden (Vorgabe 6.00 m, max. 15 %, Übergänge 8 % auf 3 m); liefert `{ floor, walls, main }` |
 | `splitView(viewId, { n, dir?, overlap?, box?, margin?, matchLines?, names? })`, `addDependentView(parentId, { name?, crop? })` | Grossformat: Grundriss in abhängige Teilpläne teilen (mit Anschlusslinien) bzw. einzelne abhängige Ansicht |
 | `addMatchLine(viewId, a, b, views?)`, `addKeyPlan(sheetId, { refId?, p?, size?, title? })` | Anschlusslinie, Schlüsselplan |
 | `fitElevations()` | Gebäudeansichten an das Modell anpassen |
@@ -95,6 +96,18 @@ Wandöffnung `opening`: `width`, `height`, `sill` (rechteckig) – runde Kernboh
 `loops: V2[][]` (erster Umriss außen, weitere = Aussparungen), `levelId`, `offset` (Oberkante bei Decken, Unterseite bei `ceiling`).
 Dach: `baseOffset` (Traufe), `edges: { slope, angle }[][]` je Umrisskante (Neigung in Grad).
 Typen mit `layers` (oben → unten).
+
+**Gefälle / Rampe** (`floor` und `foundationSlab`): `slope: { a: V2, dir: V2, prof: { s, dz }[] }` – Oberkante = Ebene +
+`offset` + stückweise linear `dz` über der Station `s` (mm ab `a` in Richtung `dir`); 2 Punkte = Gefällepfeil, mehr Punkte =
+Knickstellen (Übergänge). Kurzform `{ a, b, pct }` (fällt von `a` nach `b` um `pct` %). Die Stärke wird lotrecht gemessen
+(Volumen = Grundfläche × Stärke); Listenfelder `slopedArea` (geneigte Fläche), `slope`, `slopeMax`. `ramp: true` → IFC
+`IfcRamp .STRAIGHT_RUN_RAMP.` (sonst `IfcSlab` als Brep mit Pset `CH_Gefaelle`). Im Grundriss: Schnitt der geneigten Platte
+und Gefällepfeile «15 %» je Abschnitt.
+
+**Wand auf geneigter Platte:** `attachBaseId` (Decke/Fundamentplatte), `attachBaseTo` (`'top'` Standard, `'bottom'`),
+`attachBaseMode` (`'min'` Standard: tiefster Punkt über die Wanddicke, die Wand greift in die Platte; `'max'`: höchster
+Punkt). `attachTopId` folgt auch einer geneigten Unterseite. Türen auf geneigter Unterkante: Schwelle = höchste
+Wandunterkante im Türbereich + `sill`. Geländer `railing` mit `hostId` auf einer Decke folgen deren Oberfläche.
 
 ### Fundamente
 `foundationIsolated`: `p`, `rot`, `levelId`, `offset` (Oberkante) · `foundationWall`: `hostId` (Wand), `ecc` ·

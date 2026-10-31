@@ -166,6 +166,12 @@ export function placeView(sheetId: Id, viewId: Id, center: V2, detail?: string, 
 export const addSchedule = (o: { name: string; cat: string; def?: any; id?: Id }) =>
   add<View>({ id: o.id, cat: 'view', kind: 'schedule', name: o.name, scale: 1, detail: 'medium', data: o.def ?? defaultDef(doc, o.cat) } as any);
 
+// ------------------------------------------------------------ Rampen / geneigte Platten
+import { createRamp, RampSpec } from './modules/architecture/ramp';
+export type { RampSpec } from './modules/architecture/ramp';
+/** Rampe als eine geneigte Platte mit Übergängen (`floor.slope`, `ramp: true`), optional mit Trogwänden (Unterkante auf der Rampe) */
+export const addRamp = (o: RampSpec) => doc.transaction('API: Rampe', () => createRamp(doc, o));
+
 // ------------------------------------------------------------ Grossformat-Pläne (Teilpläne, Anschlusslinien, Schlüsselplan)
 import * as large from './modules/output/largeSheets';
 export type { SplitOpts } from './modules/output/largeSheets';

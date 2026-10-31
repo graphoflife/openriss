@@ -18,6 +18,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Türen und Fenster (Rohbaumaße, ein-/zweiflügelig, Schiebetür, Rolltor, Sektionaltor, Teleskop-Lifttür,
   Dreh-Kipp-Symbol in Ansichten), automatische Kennzeichen, Anschlag/Aufschlag umkehren
 - Liftkabine im Schacht (Kabine, Tür, Gegengewicht auf allen Haltestellen, IfcTransportElement)
+- Geschossdecken mit Gefälle und Rampen (Knickstellen/Übergänge, Trogwände mit geneigter Unterkante), Wände unten an
+  geneigte Platten fixieren
 - Geschossdecken, Decken, Dächer (Walm-, Sattel-, Pult- und Flachdach, Wände oben fixieren),
   Treppen, Geländer, Bauteile (Möbel, Sanitär, Küche), Räume mit Fläche und Raumstempel,
   Raumtrennung, Wand- und Schachtöffnungen
@@ -120,7 +122,7 @@ Umschalt + mittlere Taste = Orbit in 3D.
 ## Bekannte Grenzen
 
 OpenRiss deckt die häufigsten Zeichenaufgaben ab, ist aber kein vollständiger Revit-Ersatz. Nicht
-vorhanden sind u. a. Familieneditor, Gruppen, Arbeitsteilung (Worksets), Vorhangfassaden, Rampen,
+vorhanden sind u. a. Familieneditor, Gruppen, Arbeitsteilung (Worksets), Vorhangfassaden,
 Ansichtsvorlagen und DWG/RVT-Dateien (DXF und IFC dienen dem Datenaustausch). Flächen- und
 Mattenbewehrung funktionieren in Decken und Platten (Grundriss), Bewehrungssätze passen sich nach
 Änderungen am Bauteil über „An Bauteil anpassen“ an.
