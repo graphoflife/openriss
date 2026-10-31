@@ -153,16 +153,30 @@ export const addSheet = (o: { no: string; name: string; size?: 'A0' | 'A1' | 'A2
   add<View>({ id: o.id, cat: 'view', kind: 'sheet', name: o.name, sheetNo: o.no, scale: 1, detail: 'medium',
     data: { size: o.size ?? 'A1', portrait: !!o.portrait, drawnBy: '', checkedBy: '', date: new Date().toLocaleDateString('de-CH'), index: '', ...(o.data ?? {}) } } as any);
 /** Ansicht auf Plan platzieren (center in Papier-mm) */
-export function placeView(sheetId: Id, viewId: Id, center: V2, detail?: string): El {
+export function placeView(sheetId: Id, viewId: Id, center: V2, detail?: string, o: { segFrom?: number; segCount?: number | 'rest'; scaleBar?: boolean } = {}): El {
   const v = doc.get<View>(viewId); if (!v) throw new ApiError([{ id: viewId, cat: 'viewport', field: 'refId', msg: 'Ansicht unbekannt' }]);
-  const b = viewExtent(doc, v);
+  // umbrochene Liste: Ausdehnung des gezeigten Abschnitts
+  const seg = v.kind === 'schedule' && (o.segFrom !== undefined || o.segCount !== undefined) ? { segFrom: o.segFrom ?? 0, segCount: o.segCount } : {};
+  const b = viewExtent(doc, v, seg);
   const n = doc.all<any>('viewport').filter((x) => x.viewId === sheetId).length + 1;
-  return add({ cat: 'viewport', viewId: sheetId, refId: viewId, center, detail: detail ?? String(n),
+  return add({ cat: 'viewport', viewId: sheetId, refId: viewId, center, detail: detail ?? String(n), ...seg, ...(o.scaleBar ? { scaleBar: true } : {}),
     anchor: v.kind === 'schedule' ? { x: b.min.x, y: b.max.y } : { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2 } });
 }
 /** Bauteilliste (Definition siehe docs/API.md; ohne def: Standardfelder der Kategorie) */
 export const addSchedule = (o: { name: string; cat: string; def?: any; id?: Id }) =>
   add<View>({ id: o.id, cat: 'view', kind: 'schedule', name: o.name, scale: 1, detail: 'medium', data: o.def ?? defaultDef(doc, o.cat) } as any);
+
+// ------------------------------------------------------------ Grossformat-Pläne (Teilpläne, Anschlusslinien, Schlüsselplan)
+import * as large from './modules/output/largeSheets';
+export type { SplitOpts } from './modules/output/largeSheets';
+/** Grundriss in n abhängige Ansichten (Teilpläne) mit Überlappung teilen, Anschlusslinien dazwischen */
+export const splitView = (viewId: Id, o: large.SplitOpts) => doc.transaction('API: Ansicht teilen', () => large.splitView(doc, viewId, o));
+/** abhängige Ansicht (eigener Zuschnitt, übrige Eigenschaften und Beschriftungen von der Hauptansicht) */
+export const addDependentView = (parentId: Id, o: Parameters<typeof large.addDependentView>[2] = {}) => doc.transaction('API: Abhängige Ansicht', () => large.addDependentView(doc, parentId, o));
+/** Anschlusslinie in einer Ansicht (Text «Anschluss Plan …» aus der Platzierung der Teilpläne) */
+export const addMatchLine = (viewId: Id, a: V2, b: V2, views?: Id[]) => doc.transaction('API: Anschlusslinie', () => large.addMatchLine(doc, viewId, a, b, views));
+/** Schlüsselplan auf einem Plan (Gebäudeumriss, Teilbereiche, aktueller Teil hervorgehoben) */
+export const addKeyPlan = (sheetId: Id, o: Parameters<typeof large.addKeyPlan>[2] = {}) => doc.transaction('API: Schlüsselplan', () => large.addKeyPlan(doc, sheetId, o));
 
 /** Linienstil (Projekttyp: Farbe, Stift 1–16, Strichart) anlegen – oder den vorhandenen mit gleichen Eigenschaften liefern */
 export const addLineStyle = (o: { name?: string; color?: string; pen: number; dash?: DashName; id?: Id }): LineStyleType =>

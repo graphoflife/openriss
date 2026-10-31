@@ -1,5 +1,6 @@
 // Ansichtsfenster auf Plänen: Beschriftungselement 'viewport' (viewId = Plan, refId = Ansicht).
 // Zeichnet die Display-Liste der Ansicht im Maßstab 1:scale (Plan-mm = Ansichts-mm / scale) plus Ansichtstitel.
+import { drawScalebar, niceLength, SymEl } from '../annotation/details';
 import { lineStyleOfPrim } from '../../elements/datums';
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
@@ -25,6 +26,8 @@ export interface Viewport extends El {
   anchor: V2;        // Ansichts-mm: Punkt der Ansicht, der auf center liegt
   detail: string;    // Detailnummer
   showTitle?: boolean;
+  /** grafische Massstabsleiste neben dem Ansichtstitel */
+  scaleBar?: boolean;
   titleOff?: V2;     // Verschiebung des Titels (Plan-mm)
   /** umbrochene Bauteilliste: erster Abschnitt (0-basiert) und Anzahl ('rest' = alle folgenden; fehlt = «Abschnitte nebeneinander») */
   segFrom?: number;
@@ -147,6 +150,11 @@ function drawViewport(dl: DisplayList, el: El, doc: Doc): void {
   dl.text(c, vp.detail ?? '', { size: 3, ha: 'center', va: 'middle', bold: true });
   dl.text({ x: x1, y: t0.y + 1.2 }, name, { size: 3.5, bold: true });
   if (v.kind !== 'legend') dl.text({ x: x1, y: t0.y - 1.2 }, scaleLabel(v), { size: 2.5, va: 'top' });
+  // Massstabsleiste rechts neben dem Titel (≈ 40 mm Papier, Länge 1-2-5 in Modell-mm)
+  if (vp.scaleBar && v.kind !== 'legend' && v.scale > 0) {
+    const L = niceLength(40 * v.scale);
+    drawScalebar(dl, { id: vp.id, cat: 'symbol', viewId: vp.viewId, kind: 'scalebar', p: { x: x1 + Math.max(textWidth(name, 3.5 * 1.08), textWidth(scaleLabel(v), 2.5)) + 10, y: t0.y - 1 }, length: L, height: 1.6 } as SymEl, v.scale, v.scale);
+  }
 }
 
 // ------------------------------------------------------------ Kategorie
@@ -193,6 +201,7 @@ registerCategory({
       } },
       { key: 'titleOnSheet', label: 'Titel auf Plan', group: g.identity, type: 'text', get: () => v?.titleOnSheet ?? '', set: (_e, x) => { setView({ titleOnSheet: x }); } },
       { key: 'showTitle', label: 'Titel anzeigen', group: g.graphics, type: 'bool', get: (e) => e.showTitle !== false, set: (_e, x) => ({ showTitle: !!x }) },
+      { key: 'scaleBar', label: 'Massstabsleiste im Titel', group: g.graphics, type: 'bool', get: (e) => !!e.scaleBar, set: (_e, x) => ({ scaleBar: !!x || undefined }) },
     ];
     // umbrochene Liste: welche Abschnitte dieses Ansichtsfenster zeigt (Fortsetzung auf weiteren Plänen)
     const sp = v && v.kind === 'schedule' ? schedSplit(v) : null;

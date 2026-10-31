@@ -17,3 +17,13 @@ const texts = items.filter((it: any) => it.k === 'text').map((it: any) => it.s);
 assert.deepEqual(texts.slice(0, 6), ['0', '1', '2', '3', '4', '5 m']);
 const xs = fills.flatMap((f: any) => f.rings[0].map((p: any) => p.x));
 assert.equal(Math.max(...xs) - Math.min(...xs), 5000, 'Länge in Modell-mm');
+
+// Massstabsleiste im Ansichtstitel auf dem Plan: Papierlänge = Modelllänge / Massstab
+{
+  const sh = api.add<any>({ cat: 'view', kind: 'sheet', name: 'Test', sheetNo: 'T-1', scale: 1, detail: 'fine', data: { size: 'A3' } });
+  const vp = api.placeView(sh.id, plan.id, { x: 200, y: 150 }, undefined, { scaleBar: true });
+  const its = buildViewDL(doc, doc.get(sh.id)!).items.filter((it: any) => it.o === vp.id && it.k === 'text');
+  const t1 = its.find((t: any) => t.s === '2 m'); const t0 = its.filter((t: any) => t.s === '0').pop();
+  assert.ok(t0 && t1, 'Beschriftung der Leiste im Titel (0 … 2 m)');
+  assert.ok(Math.abs(t1.p.x - t0.p.x - 2000 / 100) < 1e-6, 'Länge in Papier-mm = 2 m / 100');
+}

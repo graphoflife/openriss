@@ -231,13 +231,14 @@ export function niceLength(v: number): number {
 export const scalebarLength = (el: SymEl, scale: number) => (el.length && el.length > 0 ? el.length : niceLength(50 * scale));
 
 /** Massstabsleiste (Schweizer Darstellung): Felder schwarz/weiss, erstes Feld unterteilt, Beschriftung 0 … L m */
-function drawScalebar(dl: DisplayList, el: SymEl): void {
-  const s = dl.scale; const L = scalebarLength(el, s);
+export function drawScalebar(dl: DisplayList, el: SymEl, k = 1, scale = dl.scale): void {
+  // k: Modell-mm je Zeichnungseinheit (Ansicht 1, auf dem Plan = Ansichtsmassstab), scale: Massstab für Länge/Beschriftung
+  const s = dl.scale; const L = scalebarLength(el, scale);
   const div = Math.max(1, Math.round(el.div ?? (Math.abs(L / niceLength(L / 4) - 5) < 1e-6 ? 5 : 4)));
   const sub = Math.max(0, Math.round(el.sub ?? 2));
   const h = (el.height ?? 2) * s; const rot = el.rot ?? 0;
   const ex = fromAngle(rot), ey = fromAngle(rot + Math.PI / 2);
-  const Q = (x: number, y: number) => add(el.p, add(mul(ex, x), mul(ey, y)));
+  const Q = (x: number, y: number) => add(el.p, add(mul(ex, x / k), mul(ey, y)));
   const pen: Pen = { w: 1 };
   const box = (x0: number, x1: number, y0: number, y1: number, black: boolean) =>
     dl.fill([[Q(x0, y0), Q(x1, y0), Q(x1, y1), Q(x0, y1)]], black ? solid('#000000') : { color: '#ffffff' }, pen, { ns: true });
@@ -257,7 +258,7 @@ function drawScalebar(dl: DisplayList, el: SymEl): void {
     dl.text(Q(x, -0.8 * s), fmt(x) + (i === div ? ' ' + unit : ''), { size: ts, rot: td.ang, ha: i === div ? 'left' : 'center', va: 'top' }, { ns: true });
   }
   if (sub > 1) dl.text(Q(d / sub, -0.8 * s), fmt(d / sub), { size: ts * 0.85, rot: td.ang, ha: 'center', va: 'top' }, { ns: true });
-  if (el.showScale) dl.text(Q(0, h + 1 * s), el.label || 'M 1:' + Math.round(s), { size: ts, rot: td.ang, ha: 'left', va: 'bottom' }, { ns: true });
+  if (el.showScale) dl.text(Q(0, h + 1 * s), el.label || 'M 1:' + Math.round(scale), { size: ts, rot: td.ang, ha: 'left', va: 'bottom' }, { ns: true });
 }
 
 function slopeText(el: SymEl): string { return el.label || fmtNum(el.slope ?? 2, 1) + ' %'; }

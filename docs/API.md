@@ -34,7 +34,9 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `addLevel`, `addGrid`, `addWall`, `addDoor`, `addWindow`, `addWallOpening`, `addFloor`, `addRoof`, `addColumn`, `addBeam`, `addStair`, `addRoom`, `addRebar` | Erzeuger mit sinnvollen Vorgaben |
 | `syncStairBearings(id?)` | Treppenlager (`stairBearing`) nach Änderung der Lagerfelder einer bzw. aller Treppen nachführen |
 | `addRebarTag(rebarId, viewId, off?)`, `tagOnPlace(ids, viewId)` | Beschriftungen |
-| `addPlanView`, `addSection`, `addSheet`, `placeView(sheetId, viewId, center)`, `addSchedule` | Ansichten, Pläne, Listen |
+| `addPlanView`, `addSection`, `addSheet`, `placeView(sheetId, viewId, center, detail?, { segFrom?, segCount?, scaleBar? })`, `addSchedule` | Ansichten, Pläne, Listen (bei umbrochenen Listen: gezeigte Abschnitte; `scaleBar`: Massstabsleiste im Titel) |
+| `splitView(viewId, { n, dir?, overlap?, box?, margin?, matchLines?, names? })`, `addDependentView(parentId, { name?, crop? })` | Grossformat: Grundriss in abhängige Teilpläne teilen (mit Anschlusslinien) bzw. einzelne abhängige Ansicht |
+| `addMatchLine(viewId, a, b, views?)`, `addKeyPlan(sheetId, { refId?, p?, size?, title? })` | Anschlusslinie, Schlüsselplan |
 | `fitElevations()` | Gebäudeansichten an das Modell anpassen |
 | `applyLocale('CH', { retype?, elev00? })` | Landesvorlage Schweiz: Masstexte «1.82⁵», Koten «OK +2.75», Schweizer Plankopf, Dezimalpunkt, `elev00` = ±0.00 in m ü. M. |
 | `addRevision(sheetId, { text, by?, date?, index? })` | Revision im Plankopf (Index wird fortgezählt) |
@@ -193,13 +195,29 @@ Ansicht: `origin`, `dir`, `far`.
 `sheetNo`, `name`, `data: { size: 'A0'…'A4', portrait, drawnBy, checkedBy, date, index, … }`.
 
 ### Ansichtsfenster `viewport`
-`viewId` (Plan), `refId` (platzierte Ansicht), `center` (Papier-mm), `anchor` (Ansichtspunkt in der Mitte), `detail`.
+`viewId` (Plan), `refId` (platzierte Ansicht), `center` (Papier-mm), `anchor` (Ansichtspunkt in der Mitte), `detail`,
+`showTitle`, `scaleBar` (grafische Massstabsleiste neben dem Titel). Bei umbrochenen Listen `segFrom` (0-basiert) und
+`segCount` (Anzahl oder `'rest'`), damit dieselbe Liste auf weiteren Plänen fortgesetzt wird.
 `placeView` berechnet `anchor` aus dem Zuschnitt bzw. der Ausdehnung der Ansicht.
+
+### Grossformat-Pläne: abhängige Ansichten, Anschlusslinien, Schlüsselplan
+- Abhängige Ansicht (Grundriss/Deckenplan): `parentId` (Hauptansicht) und `hostId` (= Hauptansicht, Löschen kaskadiert).
+  Eigen sind `name`, `crop`, `titleOnSheet`, `data.marker`; alle übrigen Eigenschaften werden beim Schreiben
+  synchronisiert (Änderung an einem Teil wirkt auf die Hauptansicht und alle Teile). Beschriftungen der Hauptansicht
+  erscheinen in den Teilen (auf den Zuschnitt beschnitten); neue Beschriftungen in einem Teil gehören der Hauptansicht.
+- `depFrames` (Ansicht): Rahmen der Teilpläne mit Plannummer zeigen (Übersichtsplan, z. B. Duplikat im Massstab 1:500).
+- Anschlusslinie `matchline`: `viewId`, `a`, `b`, `views?: [links, rechts]`, `prefix?` – Text «ANSCHLUSS PLAN A-102.2» aus
+  der Platzierung der angrenzenden Teile.
+- Schlüsselplan `keyplan` (auf einem Plan): `viewId` (Plan), `refId?` (Hauptansicht), `p` (unten links, Papier-mm), `size`,
+  `title?` – Gebäudeumriss mit Teilbereichen, der Teil auf diesem Plan schraffiert.
 
 ### Bauteilliste `view` mit `kind:'schedule'`
 `data: { cat, fields: string[], sort: { key, desc? }[], filters: { key, op, value }[], totals, itemize, sums, labels?, header?, footer? }`.
 Feldschlüssel: `type`, `mark`, `comments`, `count`, `level` sowie die Felder der Kategorie (z. B. Wand `length`, `area`;
 Bewehrung `pos`, `dia`, `shape`, `barLen`, `totalLen`, `weight`). `addSchedule({ name, cat })` erzeugt Standardfelder.
+**Umbruch langer Listen** (auch Eisenliste): `data.split: { maxH (Tabellenhöhe je Abschnitt, mm), cols? (Abschnitte
+nebeneinander), gap?, subtotal? }` – Kopfzeile je Abschnitt, «Übertrag» am Ende und Anfang mit laufenden Summen,
+optional Zwischentotal, Gesamttotal am Schluss (Eisenliste: Übertrag in kg und Positionen, Zusammenfassung je Ø am Schluss).
 
 ## Projekt aus JSON (Oberfläche)
 

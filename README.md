@@ -63,7 +63,10 @@ Tür, `DI` bemaßt, `MV` verschiebt.
   Grafiken in Ansicht überschreiben, temporär ausblenden/isolieren (HH/HI/HR), dünne Linien (TL), Unterlage
 - Phasen für Umbauplanung: Bestand, Neubau, Abbruch – Bauantragsdarstellung (grau/rot/gelb)
 - 3D-Ansicht mit ViewCube, Orbit (Umschalt + mittlere Maustaste), visuellen Stilen und Schnittbereich
-- Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten
+- Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten (lange Listen umbrechen mit
+  Übertrag und Zwischentotal, Fortsetzung auf weiteren Plänen)
+- Grossformat-Pläne: Grundriss in abhängige Teilpläne teilen, Anschlusslinien mit Planverweis, Übersichtsplan,
+  Schlüsselplan; Massstabsleiste im Ansichtstitel
 - Drucken, Vektor-PDF ohne Druckdialog (einzelner Plan oder „Alle Pläne als PDF“, Maßstab exakt, Schrift
   eingebettet, weitere TTF einbettbar), SVG, PNG, DXF (Export und Import, Layer je Linienstil mit Farbe), IFC4-Export
   (auch als Teilmodell je Fachbereich, z. B. nur Tragwerk), glTF/OBJ, Rasterbilder als Unterlage
