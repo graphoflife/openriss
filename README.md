@@ -70,7 +70,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Grossformat-Pläne: Grundriss in abhängige Teilpläne teilen, Anschlusslinien mit Planverweis, Übersichtsplan,
   Schlüsselplan; Massstabsleiste im Ansichtstitel
 - Drucken, Vektor-PDF ohne Druckdialog (einzelner Plan oder „Alle Pläne als PDF“, Maßstab exakt, Schrift
-  eingebettet, weitere TTF einbettbar), SVG, PNG, DXF (Export und Import, Layer je Linienstil mit Farbe), IFC4-Export
+  eingebettet, weitere TTF einbettbar), SVG, PNG, DXF (Export und Import, Layer je Linienstil mit Farbe), Vektorgrafik-Import
+  (DXF, SVG, PDF als bearbeitbare Linien, Bereiche und Texte), IFC4-Export
   (auch als Teilmodell je Fachbereich, z. B. nur Tragwerk), glTF/OBJ, Rasterbilder als Unterlage
 - Beispielprojekt (Einfamilienhaus mit Plänen, Schnitten, Bewehrung und Türliste) unter
   *Einfügen → Beispielprojekt*

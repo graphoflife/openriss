@@ -166,6 +166,16 @@ export function placeView(sheetId: Id, viewId: Id, center: V2, detail?: string, 
 export const addSchedule = (o: { name: string; cat: string; def?: any; id?: Id }) =>
   add<View>({ id: o.id, cat: 'view', kind: 'schedule', name: o.name, scale: 1, detail: 'medium', data: o.def ?? defaultDef(doc, o.cat) } as any);
 
+// ------------------------------------------------------------ Vektorgrafik importieren (DXF, SVG, PDF → Detailelemente)
+import { importVector as importVector0, VectorImportOpts } from './modules/output/vectorImport';
+import { explodeCad } from './modules/output/dxfCommands';
+export type { VectorImportOpts } from './modules/output/vectorImport';
+export { readVector, detectFormat } from './modules/output/vectorImport';
+/** DXF/SVG/PDF als bearbeitbare Detailelemente (Linien mit Linienstilen, Bereiche, Texte) in eine Ansicht importieren */
+export const importVector = (viewId: Id, data: string | Uint8Array, opts: VectorImportOpts = {}) => importVector0(doc, viewId, data, opts);
+/** verknüpfte DXF-Importe auflösen (Linienstile nach Farbe/Linientyp/Stärke, Texte, Füllungen) */
+export const explodeCadImport = (ids: Id[], o: Parameters<typeof explodeCad>[2] = {}) => doc.transaction('API: Import auflösen', () => explodeCad(doc, ids, o));
+
 // ------------------------------------------------------------ Rampen / geneigte Platten
 import { createRamp, RampSpec } from './modules/architecture/ramp';
 export type { RampSpec } from './modules/architecture/ramp';
