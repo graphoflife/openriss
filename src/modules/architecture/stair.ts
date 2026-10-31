@@ -20,6 +20,7 @@ import { placementFor, rememberProto, activeLevelId } from '../../tools/elementT
 import { startTool, registerSimilar } from '../../ui/commands';
 import { normTextAngle } from '../../elements/datums';
 import { identityProps, levelName } from './common';
+import { stairJoints, stairJointProps, withBearingSync, syncStairBearings, hasStairJoints } from './stairJoints';
 
 export type StairShape = 'straight' | 'L' | 'U';
 export interface Stair extends El {
@@ -47,7 +48,7 @@ export interface StairType extends TypeEl { of: 'stair'; mat?: Id; waist: number
 
 export const stairType = (doc: Doc, s: El) => typeOf<StairType>(doc, s);
 
-interface Run { s: V2; d: V2; m: number; k0: number; z: number; L: number }
+export interface Run { s: V2; d: V2; m: number; k0: number; z: number; L: number }
 export interface StairGeom {
   z0: number; z1: number; H: number; n: number; r: number; t: number; w: number;
   runs: Run[];
@@ -103,7 +104,7 @@ export function stairGeom(doc: Doc, s: El): StairGeom {
 export const stairLabel = (g: StairGeom): string => `${g.n} Stg. ${fmtNum(g.r / 10, 1)}/${fmtNum(g.t / 10, 1)}`;
 
 /** Ränder eines Laufs (lokal): Punkt bei u (entlang) und v (quer) */
-const RP = (run: Run, u: number, v: number): V2 => add(add(run.s, mul(run.d, u)), mul(perp(run.d), v));
+export const RP = (run: Run, u: number, v: number): V2 => add(add(run.s, mul(run.d, u)), mul(perp(run.d), v));
 
 /** Geländerpfad (Welt, 3D) an einer Seite (+1 links / -1 rechts im lokalen System), 50 mm eingerückt */
 export function stairSidePath(doc: Doc, s: El, side: 1 | -1, inset = 50): V3[] {
@@ -232,32 +233,48 @@ function drawStairPlan(ctx: PlanCtx, s: El): void {
       drawStair(ctx, s, g, g.z0 + rel, true, vis, null);
     }
   }
+  // Austrittsstufe in der ausgeklinkten Decke (Z-Lager/Querkraftdorne am Austritt)
+  for (const x of stairJoints(ctx.doc, s).planExt) if (x.z <= ctx.cutZ + 1 && x.z >= ctx.depthZ - 1) ctx.dl.poly(x.ring, vis, true);
 }
 
 // ------------------------------------------------------------ 3D
+/** Laufprofil (u entlang des Laufs, z absolut) einer Massivtreppe ohne Lagerdetails */
+export function runProfileBase(doc: Doc, s: El, g: StairGeom, i: number): V2[] | null {
+  const run = g.runs[i]; if (!run || run.m < 2) return null;
+  const t = stairType(doc, s); const e = t?.waist ?? 160;
+  const slope = g.r / g.t; const c = Math.sqrt(1 + slope * slope);
+  const uEnd = run.L; const zr = run.z;
+  const prof: V2[] = [{ x: 0, y: zr }];
+  for (let j = 1; j < run.m; j++) prof.push({ x: (j - 1) * g.t, y: zr + j * g.r }, { x: j * g.t, y: zr + j * g.r });
+  prof.push({ x: uEnd, y: zr + run.m * g.r });
+  const zu = (u: number) => zr + slope * u - e * c;
+  if (i === 0) {
+    const us = (e * c) / slope;
+    if (us < uEnd) prof.push({ x: uEnd, y: zu(uEnd) }, { x: us, y: zr });
+    else prof.push({ x: uEnd, y: zr });
+  } else prof.push({ x: uEnd, y: zu(uEnd) }, { x: 0, y: zu(0) });
+  return prof;
+}
+
 function stairSolids(doc: Doc, s: El): Solid[] {
   const g = stairGeom(doc, s); const t = stairType(doc, s);
-  const mat = t?.mat ?? 'm_stb'; const e = t?.waist ?? 160; const lt = t?.landingThick ?? 200;
-  const out: Solid[] = [];
+  const mat = t?.mat ?? 'm_stb'; const lt = t?.landingThick ?? 200;
+  const jg = stairJoints(doc, s);
+  const out: Solid[] = [...jg.concrete];
   const up: V3 = { x: 0, y: 0, z: 1 };
   const to3 = (v: V2, z = 0): V3 => ({ x: v.x, y: v.y, z });
-  const slope = g.r / g.t; const c = Math.sqrt(1 + slope * slope);
+  const slope = g.r / g.t;
   g.runs.forEach((run, i) => {
     if (run.m < 2) return;
     const uEnd = run.L; const zr = run.z;
     const dW = g.WV(run.d); const nW = g.WV(perp(run.d));
-    const org = to3(g.W(RP(run, 0, -g.w / 2)));
     if ((t?.construction ?? 'massiv') === 'massiv') {
-      const prof: V2[] = [{ x: 0, y: zr }];
-      for (let j = 1; j < run.m; j++) prof.push({ x: (j - 1) * g.t, y: zr + j * g.r }, { x: j * g.t, y: zr + j * g.r });
-      prof.push({ x: uEnd, y: zr + run.m * g.r });
-      const zu = (u: number) => zr + slope * u - e * c;
-      if (i === 0) {
-        const us = (e * c) / slope;
-        if (us < uEnd) prof.push({ x: uEnd, y: zu(uEnd) }, { x: us, y: zr });
-        else prof.push({ x: uEnd, y: zr });
-      } else prof.push({ x: uEnd, y: zu(uEnd) }, { x: 0, y: zu(0) });
-      out.push({ faces: extrudeProfile(prof, org, to3(dW), up, to3(nW), g.w), mat });
+      // Laufprofil inkl. Lager-Ausklinkungen (Z-Lager, Schalldämmlager, Querkraftdorne), schmaler bei Fugen zur Wand
+      const [ia, ib] = jg.insets[i];
+      const org = to3(g.W(RP(run, 0, -g.w / 2 + ia)));
+      for (const prof of jg.profiles[i] ?? [runProfileBase(doc, s, g, i)]) {
+        if (prof && prof.length >= 3) out.push({ faces: extrudeProfile(prof, org, to3(dW), up, to3(nW), g.w - ia - ib), mat });
+      }
     } else {
       // Wangentreppe: Trittstufen + zwei Wangen
       const tt = t?.treadThick ?? 40; const faces: Face[] = [];
@@ -274,7 +291,11 @@ function stairSolids(doc: Doc, s: El): Solid[] {
       }
     }
   });
-  for (const l of g.landings) out.push({ faces: prism(l.ring.map(g.W), l.z - lt, l.z), mat });
+  g.landings.forEach((l, k) => {
+    const lp = jg.landings[k];
+    if (!lp) out.push({ faces: prism(l.ring.map(g.W), l.z - lt, l.z), mat });
+    else for (const poly of lp) out.push({ faces: prism(poly[0].map(g.W), l.z - lt, l.z, poly.slice(1).map((h) => h.map(g.W))), mat });
+  });
   return out;
 }
 
@@ -344,7 +365,7 @@ registerCategory({
   },
   translate3d: (el, d) => ({ p0: { x: el.p0.x + d.x, y: el.p0.y + d.y }, baseOffset: (el.baseOffset ?? 0) + d.z, topOffset: el.topLevelId ? (el.topOffset ?? 0) + d.z : el.topOffset }),
   center: (el, doc) => { const g = stairGeom(doc, el); return g.W(g.walk[Math.floor(g.walk.length / 2)]); },
-  props: () => stairProps(),
+  props: () => withBearingSync([...stairProps(), ...stairJointProps()]),
   typeProps: () => stairTypeProps(),
   tagText: (el, doc) => stairLabel(stairGeom(doc, el)),
   tagPoint: (el, doc) => { const g = stairGeom(doc, el); return g.W(g.walk[0]); },
@@ -410,6 +431,7 @@ class StairTool extends Tool {
         const rt = app.doc.get('rlt_1000') ? 'rlt_1000' : app.doc.all<TypeEl>('type').find((t) => t.of === 'railing')?.id;
         for (const side of [1, -1] as const) app.doc.add({ id: newId('rl'), cat: 'railing', typeId: rt, levelId: s.levelId, baseOffset: 0, path: [], hostId: s.id, side } as El);
       }
+      if (hasStairJoints(s)) syncStairBearings(app.doc, s);
     });
     app.select([id]);
     this.start = null; this.cur = null;

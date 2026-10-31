@@ -26,6 +26,7 @@ import { applyLocale as applyLocaleTo } from './modules/annotation/locale';
 import { addRevision as addRevisionTo } from './modules/output/sheets';
 import { createRebarTag } from './modules/structure/rebar/tag';
 import { fitElevationsTo, elevationsAtTemplate } from './views/fitElevations';
+import { syncStairBearings as syncBearings, hasStairJoints, stairBearingsInSync, addStairJointTemplate } from './modules/architecture/stairJoints';
 
 export { app };
 /** Das aktuelle Projektdokument */
@@ -110,8 +111,19 @@ export const addColumn = (o: { p: V2; levelId: Id; topLevelId?: Id | null; typeI
   add({ cat: 'column', rot: 0, baseOffset: 0, topOffset: 0, height: 3000, ...o });
 export const addBeam = (o: { a: V2; b: V2; levelId: Id; typeId?: Id; offA?: number; offB?: number; zJust?: string; id?: Id }) =>
   add({ cat: 'beam', offA: 0, offB: 0, zJust: 'top', yOff: 0, ...o });
-export const addStair = (o: { p0: V2; dir: V2; levelId: Id; topLevelId?: Id | null; typeId?: Id; shape?: string; width?: number; [k: string]: any }) =>
-  add({ cat: 'stair', baseOffset: 0, topOffset: 0, height: 3000, shape: 'straight', turn: 1, width: 1000, maxRiser: 180, tread: 280, landing: 0, gap: 100, risers: 0, split: 0, ...o });
+export const addStair = (o: { p0: V2; dir: V2; levelId: Id; topLevelId?: Id | null; typeId?: Id; shape?: string; width?: number; [k: string]: any }) => {
+  const s = add({ cat: 'stair', baseOffset: 0, topOffset: 0, height: 3000, shape: 'straight', turn: 1, width: 1000, maxRiser: 180, tread: 280, landing: 0, gap: 100, risers: 0, split: 0, ...o });
+  if (hasStairJoints(s)) syncStairBearings(s.id);
+  return s;
+};
+/** Treppenlager (Z-Lager, Schalldämmlager, Querkraftdorne, Fugenplatten) nach Änderung der Lagerfelder nachführen – eine oder alle Treppen */
+export function syncStairBearings(id?: Id): number {
+  const stairs = (id ? [doc.get(id)] : doc.all('stair')).filter((s): s is El => !!s && s.cat === 'stair');
+  if (stairs.some((s) => hasStairJoints(s) || !stairBearingsInSync(doc, s))) {
+    doc.transaction('Treppenlager', () => { addStairJointTemplate(doc); for (const s of stairs) syncBearings(doc, s); });
+  }
+  return doc.all('stairBearing').length;
+}
 export const addRoom = (o: { pt: V2; levelId: Id; name: string; number: string; [k: string]: any }) => add({ cat: 'room', baseOffset: 0, topOffset: 0, ...o });
 export const addRebar = (o: { hostId: Id; dia: number; pts: { x: number; y: number; z: number }[]; [k: string]: any }) =>
   add({ cat: 'rebar', shape: '00', layout: 'single', count: 1, spacing: 150, display: 'first', hookA: 0, hookB: 0, ...o });
@@ -192,6 +204,7 @@ export async function finishCli(o: CliOptions): Promise<void> {
   const path: any = await import('node:path' as string);
   const safe = (s: string) => s.replace(/[^\w\-.äöüÄÖÜß ]+/g, '_');
   if (o.fitElevations || elevationsAtTemplate(doc)) fitElevations();
+  syncStairBearings();
   const shs = sheets();
   if (o.out) { fs.writeFileSync(o.out, saveProject()); console.log(`Projekt: ${o.out}`); }
   if (o.svg) {

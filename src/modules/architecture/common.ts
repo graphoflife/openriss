@@ -132,9 +132,13 @@ export function shaftRange(doc: Doc, s: Shaft): [number, number] {
   return [z0, Math.max(z1, z0 + 1)];
 }
 export function shaftArea(doc: Doc, s: Shaft): MultiPoly { return cached(doc, 'archShaftArea', s.id, () => loopsArea(s.loops)); }
+/** Weitere Aussparungen in Platten (z.B. Ausklinkung der Decke am Treppenaustritt) */
+const cutoutProviders: ((doc: Doc, hostId: Id) => Poly[])[] = [];
+export function registerCutouts(fn: (doc: Doc, hostId: Id) => Poly[]): void { cutoutProviders.push(fn); }
 /** Aussparungen (Schächte, vertikale Öffnungen) für ein Element im Höhenbereich z0..z1 */
 export function cutoutsFor(doc: Doc, hostId: Id, z0: number, z1: number): Poly[] {
   const out: Poly[] = [];
+  for (const fn of cutoutProviders) out.push(...fn(doc, hostId));
   for (const s of doc.all<Shaft>('shaft')) {
     if (s.hostId) { if (s.hostId !== hostId) continue; }
     else { const [a, b] = shaftRange(doc, s); if (!(a < z1 - 0.5 && b > z0 + 0.5)) continue; }

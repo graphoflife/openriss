@@ -47,8 +47,11 @@ interface RunCtx {
   D3: V3; N3: V3;
   before: { depth: number; z: number } | null;
   after: { depth: number; z: number } | null;
+  /** Podest nach dem Lauf (auch bei Lagerfuge Lauf/Podest) */
+  landAfter: { depth: number; z: number } | null;
 }
-function runCtx(g: StairGeom, i: number): RunCtx {
+/** mono = false: Lauf und Podest durch Lager getrennt – Längsstäbe enden am Lauf */
+function runCtx(g: StairGeom, i: number, mono = true): RunCtx {
   const run = g.runs[i];
   const P = (u: number, v: number): V2 => add(add(run.s, mul(run.d, u)), mul(perp(run.d), v));
   const W3 = (u: number, v: number, z: number): V3 => { const q = g.W(P(u, v)); return { x: q.x, y: q.y, z }; };
@@ -62,8 +65,9 @@ function runCtx(g: StairGeom, i: number): RunCtx {
   return {
     i, run, L: run.L, k, c_: Math.sqrt(1 + k * k), zr: run.z, w: g.w, W3,
     D3: { x: D.x, y: D.y, z: 0 }, N3: { x: N.x, y: N.y, z: 0 },
-    before: i > 0 ? lnd(i - 1, run.s, mul(run.d, -1)) : null,
-    after: i < g.runs.length - 1 ? lnd(i, end, run.d) : null,
+    before: i > 0 && mono ? lnd(i - 1, run.s, mul(run.d, -1)) : null,
+    after: i < g.runs.length - 1 && mono ? lnd(i, end, run.d) : null,
+    landAfter: i < g.runs.length - 1 ? lnd(i, end, run.d) : null,
   };
 }
 /** Schnitt waagrechte Linie z = h mit Gerade z = a + k·u */
@@ -87,8 +91,9 @@ export function buildStairRebar(doc: Doc, st: El, o: StairRebarOpts): Partial<Re
     hookA: 0, hookB: 0, mark: PART_LABEL[part], stairFit: { run, part, o: { ...o } } as StairFit,
   } as Partial<Rebar>);
   const bar = (R: RunCtx, pts: UZ[], v: number) => clean(pts).map(([u, z]) => R.W3(u, v, z));
+  const mono = (st.jLand ?? 'mono') === 'mono';
   g.runs.forEach((_, i) => {
-    const R = runCtx(g, i);
+    const R = runCtx(g, i, mono);
     if (R.run.m < 2) return;
     const { k, c_, zr, L } = R;
     // --- Längsstäbe unten: Podest – Lauf – Podest
@@ -125,13 +130,13 @@ export function buildStairRebar(doc: Doc, st: El, o: StairRebarOpts): Partial<Re
     }
     // --- Querbewehrung Podest (nach dem Lauf): quer zum Lauf, über die Podesttiefe verteilt
     const lnd = g.landings[i];
-    if (o.landing && lnd && R.after) {
+    if (o.landing && lnd && R.landAfter) {
       const vs = lnd.ring.map((q) => dot(sub(q, R.run.s), perp(R.run.d)));
       const vmin = Math.min(...vs), vmax = Math.max(...vs);
       const z = lnd.z - lt + c + dM + dQ / 2; const u0 = L + c + dQ / 2;
       out.push({
         ...base(dQ, o.sQ, 'land', i), shape: '00', pts: [R.W3(u0, vmin + c, z), R.W3(u0, vmax - c, z)],
-        dir: R.D3, span: Math.max(0, R.after.depth - 2 * c - dQ),
+        dir: R.D3, span: Math.max(0, R.landAfter.depth - 2 * c - dQ),
       });
     }
   });
