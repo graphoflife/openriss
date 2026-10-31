@@ -170,7 +170,7 @@ async function importProjectJson(): Promise<void> {
 registerPanel('Beschriften', 'Bemaßung', ['dimAligned', 'dimLinear', 'dimAngular', 'dimRadial', 'dimArc', 'spotElevation', 'spotCoordinate'], 10);
 registerPanel('Beschriften', 'Detail', ['detailLine', 'filledRegion', 'detailComponent', 'insulation', 'revisionCloud'], 20);
 registerPanel('Beschriften', 'Text', ['text'], 30);
-registerPanel('Beschriften', 'Beschriftung', ['tagByCat', 'tagAll', 'roomTag', 'rebarTag', 'symbol'], 40);
+registerPanel('Beschriften', 'Beschriftung', ['tagByCat', 'tagAll', 'roomTag', 'rebarTag', 'symbol', 'scalebar'], 40);
 
 // ------------------------------------------------------------ Ansicht
 registerCommand({ id: 'vv', label: 'Sichtbarkeit/ Grafiken', icon: 'vv', keys: ['VV', 'VG'], enabled: () => !!app.activeView(), run: () => visibilityDialog(app.activeView()!) });

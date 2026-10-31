@@ -6,14 +6,13 @@ import { newId } from '../../core/doc';
 import { V2, add, sub, mul, dot, perp, dist, fromAngle, angleOf, apply, applyVec, isMirror, matAngle, deg, rad } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
 import type { View } from '../../core/view';
-import { DisplayList, textWidth } from '../../render/displayList';
+import { DisplayList, textWidth, fontWf } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { modal } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
 import {
-  ANNO_KINDS, fontFamily, wrapText, rectPts, drawLeader, TickKind, TICK_OPTIONS, FONTS, myPlacement, tint, PREV_COL, normTextAngle,
-} from './common';
+  ANNO_KINDS, fontFamily, wrapText, rectPts, drawLeader, TickKind, TICK_OPTIONS, FONTS, myPlacement, tint, PREV_COL, normTextAngle, typeWf, widthFactorProp } from './common';
 
 export type HAlign = 'left' | 'center' | 'right';
 export interface TextEl extends El {
@@ -30,11 +29,11 @@ export interface TextEl extends El {
   leaders?: V2[];
 }
 
-interface TextStyle { size: number; font: string; bold: boolean; italic: boolean; underline: boolean; color: string; opaque: boolean; box: boolean; leaderArrow: TickKind; arrowSize: number }
+interface TextStyle { size: number; font: string; wf?: number; bold: boolean; italic: boolean; underline: boolean; color: string; opaque: boolean; box: boolean; leaderArrow: TickKind; arrowSize: number }
 function textStyle(doc: Doc, el: El): TextStyle {
   const t: any = doc.get(el.typeId) ?? {};
   return {
-    size: t.size ?? 2.5, font: t.font ?? 'Arial', bold: el.bold ?? !!t.bold, italic: el.italic ?? !!t.italic, underline: el.underline ?? !!t.underline,
+    size: t.size ?? 2.5, font: t.font ?? 'Arial', wf: typeWf(t), bold: el.bold ?? !!t.bold, italic: el.italic ?? !!t.italic, underline: el.underline ?? !!t.underline,
     color: t.color || '#000000', opaque: !!t.opaque, box: !!t.box, leaderArrow: t.leaderArrow ?? 'arrow', arrowSize: t.arrowSize ?? 2.5,
   };
 }
@@ -43,7 +42,8 @@ export function textLayout(doc: Doc, el: TextEl, scale: number) {
   const st = textStyle(doc, el); const size = st.size * scale;
   const lines = wrapText(el.s ?? '', el.w ? el.w * scale : null, size);
   const f = st.bold ? 1.06 : 1;
-  const W = el.w ? el.w * scale : Math.max(size * 0.6, ...lines.map((l) => textWidth(l, size) * f));
+  const wf = fontWf({ wf: st.wf, family: fontFamily(st.font) });
+  const W = el.w ? el.w * scale : Math.max(size * 0.6, ...lines.map((l) => textWidth(l, size, wf) * f));
   const lh = size * 1.25; const H = lh * (lines.length - 1) + size;
   const ex = fromAngle(el.rot ?? 0); const ey = perp(ex);
   return { st, size, lines, W, H, lh, ex, ey, pad: size * 0.35 };
@@ -55,7 +55,7 @@ function drawText(dl: DisplayList, el: TextEl, doc: Doc): void {
   const ha = el.ha ?? 'left';
   const xA = ha === 'center' ? L.W / 2 : ha === 'right' ? L.W : 0;
   const anchor = add(el.p, mul(L.ex, xA));
-  const font = { size: st.size, rot: el.rot ?? 0, ha, va: 'top' as const, bold: st.bold, italic: st.italic, color: st.color, family: fontFamily(st.font), opaque: st.opaque };
+  const font = { size: st.size, rot: el.rot ?? 0, ha, va: 'top' as const, bold: st.bold, italic: st.italic, color: st.color, family: fontFamily(st.font), wf: st.wf, opaque: st.opaque };
   if (st.underline) L.lines.forEach((l, i) => dl.text(add(anchor, mul(L.ey, -i * L.lh)), l, { ...font, underline: true }));
   else dl.text(anchor, L.lines.join('\n'), font);
   const pen: Pen = { w: 1, color: st.color };
@@ -149,6 +149,7 @@ function textTypeProps(): PropDef[] {
   return [
     { key: 'size', label: 'Textgröße (mm)', group: g.text, type: 'number', get: (t) => t.size ?? 2.5, set: (_t, v) => ({ size: Math.max(0.5, v) }) },
     { key: 'font', label: 'Schriftart', group: g.text, type: 'select', options: FONTS, get: (t) => t.font ?? 'Arial', set: (_t, v) => ({ font: v }) },
+    widthFactorProp(g.text),
     { key: 'bold', label: 'Fett', group: g.text, type: 'bool', get: (t) => !!t.bold, set: (_t, v) => ({ bold: v }) },
     { key: 'italic', label: 'Kursiv', group: g.text, type: 'bool', get: (t) => !!t.italic, set: (_t, v) => ({ italic: v }) },
     { key: 'underline', label: 'Unterstrichen', group: g.text, type: 'bool', get: (t) => !!t.underline, set: (_t, v) => ({ underline: v }) },

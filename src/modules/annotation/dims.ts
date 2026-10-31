@@ -10,7 +10,7 @@ import {
 } from '../../core/geom';
 import { registerCategory, catDef, PropDef, GROUPS, Grip } from '../../core/registry';
 import { View, isPlanLike, makeProjector, Level } from '../../core/view';
-import { DisplayList, textWidth } from '../../render/displayList';
+import { DisplayList, textWidth, fontWf } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { fmtLen, fmtAngle, LengthUnit } from '../../core/units';
 import { Wall, wallInfo, layerOffsets, wallShape } from '../../elements/wall';
@@ -18,7 +18,7 @@ import { hostedBy } from '../../core/cache';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { modal } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
-import { drawTick, TickKind, readable, tint, PREV_COL, ANNO_KINDS, fontFamily, TICK_OPTIONS, FONTS, myPlacement } from './common';
+import { drawTick, TickKind, readable, tint, PREV_COL, ANNO_KINDS, fontFamily, TICK_OPTIONS, FONTS, myPlacement, typeWf, widthFactorProp } from './common';
 import { DIM_ARROW, defaultDimType } from './types';
 import { fmtDimLen, DimUnit, DecSep, SupMode } from './numfmt';
 
@@ -135,7 +135,7 @@ const repPt = (g: G): V2 => (g.k === 'seg' ? mid(g.a, g.b) : g.k === 'pt' ? g.p 
 
 // ------------------------------------------------------------ Stil (Typ)
 interface DimStyle {
-  tick: TickKind; tickSize: number; tickW: number; lineW: number; color: string; size: number; font: string;
+  tick: TickKind; tickSize: number; tickW: number; lineW: number; color: string; size: number; font: string; wf?: number;
   textGap: number; wGap: number; wExt: number; dimExt: number; unit: string; dec: number; opaque: boolean; bold: boolean;
   /** Dezimaltrennzeichen und hochgestellte mm-Stelle (fehlt = Projekteinstellung, wie bisher) */
   sep: DecSep; sup?: SupMode;
@@ -145,7 +145,7 @@ function dimStyle(doc: Doc, el: El): DimStyle {
   const n = (v: any, d: number) => (typeof v === 'number' && isFinite(v) ? v : d);
   return {
     tick: t.tick ?? 'slash', tickSize: n(t.tickSize, 2.5), tickW: n(t.tickW, 5), lineW: n(t.lineW, 1), color: t.color || '#000000',
-    size: n(t.size, 2.5), font: t.font ?? 'Arial', textGap: n(t.textGap, 0.7), wGap: n(t.wGap, 1.5), wExt: n(t.wExt, 1.5),
+    size: n(t.size, 2.5), font: t.font ?? 'Arial', wf: typeWf(t), textGap: n(t.textGap, 0.7), wGap: n(t.wGap, 1.5), wExt: n(t.wExt, 1.5),
     dimExt: n(t.dimExt, 1.5), unit: t.unit ?? '', dec: n(t.dec, 2), opaque: !!t.opaque, bold: !!t.bold,
     sep: t.sep === '.' ? '.' : ',', sup: t.sup || undefined,
   };
@@ -163,7 +163,7 @@ function finalText(el: Dim, i: number, val: string): string {
   return defPrefix(el) + (o ? o : val) + (el.suffix ?? '');
 }
 function textFont(st: DimStyle, rot: number, va: 'bottom' | 'top' | 'middle' = 'bottom') {
-  return { size: st.size, rot, ha: 'center' as const, va, color: st.color, family: fontFamily(st.font), opaque: st.opaque, bold: st.bold };
+  return { size: st.size, rot, ha: 'center' as const, va, color: st.color, family: fontFamily(st.font), wf: st.wf, opaque: st.opaque, bold: st.bold };
 }
 
 // ------------------------------------------------------------ Lineare Bemaßung (Kette)
@@ -197,7 +197,7 @@ export function linearLayout(doc: Doc, view: View, el: Dim): LinLayout | null {
 /** Textposition eines Segments (ohne/mit Verschiebung) */
 function segTextPos(lay: LinLayout, st: DimStyle, s: number, i: number, txt: string, off: V2 | null | undefined): { p: V2; base: V2 } {
   const P0 = lay.pts[i].P, P1 = lay.pts[i + 1].P; const m = mid(P0, P1); const segL = dist(P0, P1);
-  const size = st.size * s; const gap = st.textGap * s; const tw = textWidth(txt, size);
+  const size = st.size * s; const gap = st.textGap * s; const tw = textWidth(txt, size, fontWf(textFont(st, 0)));
   let p = add(m, mul(lay.td.up, gap));
   const n = lay.pts.length - 1;
   if (tw > segL - size * 0.4) {
@@ -319,7 +319,7 @@ function drawRadial(dl: DisplayList, el: Dim, doc: Doc, view: View): void {
   const u = mul(dv, 1 / D); const P = add(A.c, mul(u, A.r));
   const outside = D > A.r;
   const txt = finalText(el, 0, fmtVal(st, A.r));
-  const td = readable(u); const tw = textWidth(txt, st.size * s);
+  const td = readable(u); const tw = textWidth(txt, st.size * s, fontWf(textFont(st, 0)));
   // Mittelpunktkreuz
   const cm = 1.2 * s;
   dl.line(sub(A.c, { x: cm, y: 0 }), add(A.c, { x: cm, y: 0 }), pen, { ns: true });
@@ -482,6 +482,7 @@ function dimTypeProps(): PropDef[] {
     num('dimExt', 'Maßlinienverlängerung (mm)', g.graphics, 1.5),
     num('size', 'Textgröße (mm)', g.text, 2.5),
     { key: 'font', label: 'Schriftart', group: g.text, type: 'select', options: FONTS, get: (t) => t.font ?? 'Arial', set: (_t, v) => ({ font: v }) },
+    widthFactorProp(g.text),
     num('textGap', 'Textabstand zur Maßlinie (mm)', g.text, 0.7),
     { key: 'bold', label: 'Fett', group: g.text, type: 'bool', get: (t) => !!t.bold, set: (_t, v) => ({ bold: v }) },
     { key: 'opaque', label: 'Texthintergrund undurchsichtig', group: g.text, type: 'bool', get: (t) => !!t.opaque, set: (_t, v) => ({ opaque: v }) },

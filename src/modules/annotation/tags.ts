@@ -6,7 +6,7 @@ import { newId } from '../../core/doc';
 import { V2, add, sub, mul, perp, dist, norm, fromAngle, apply, len } from '../../core/geom';
 import { registerCategory, catDef, onHook, PropDef, GROUPS, Grip, CategoryDef } from '../../core/registry';
 import { View, isPlanLike, typesOf } from '../../core/view';
-import { DisplayList, textWidth } from '../../render/displayList';
+import { DisplayList, textWidth, fontWf } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { Wall, wallInfo } from '../../elements/wall';
@@ -14,8 +14,7 @@ import { modal, promptDialog } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
 import {
   anchorInView, fontFamily, rectPts, stadium, drawLeader, TickKind, TICK_OPTIONS, FONTS, myPlacement, previewEl,
-  hostMovesToo, markCopiedWithHost, ensureTypes, MODEL_2D, tv,
-} from './common';
+  hostMovesToo, markCopiedWithHost, ensureTypes, MODEL_2D, tv, widthFactorProp } from './common';
 
 export interface Tag extends El {
   cat: 'tag' | 'roomtag';
@@ -65,7 +64,8 @@ function tagGeo(doc: Doc, t: Tag, view: View, scale: number): TagGeo | null {
   const ref = doc.get(t.refId)!;
   const size = tv(doc, t, 'size', 2.5) * scale;
   const txt = tagLabel(doc, t); const lines = txt.split('\n');
-  const tw = Math.max(...lines.map((l) => textWidth(l, size))); const th = size * 1.25 * (lines.length - 1) + size;
+  const wf = fontWf({ wf: tv<number | undefined>(doc, t, 'widthFactor', undefined), family: fontFamily(tv(doc, t, 'font', 'Arial')) });
+  const tw = Math.max(...lines.map((l) => textWidth(l, size, wf))); const th = size * 1.25 * (lines.length - 1) + size;
   let shape = tv<string>(doc, t, 'shape', 'auto');
   if (shape === 'auto') shape = ref.cat === 'door' ? 'circle' : ref.cat === 'window' ? 'rect' : 'none';
   const pad = size * 0.45;
@@ -96,7 +96,7 @@ function drawTag(dl: DisplayList, t: Tag, doc: Doc, view: View): void {
     if (Math.abs(g.hw - g.hh) < 1e-6) dl.circle(g.P, g.hh, pen, { color: '#ffffff' });
     else dl.fill([stadium(g.P, g.ex, g.ey, g.hw, g.hh)], { color: '#ffffff' }, pen);
   } else if (g.shape === 'rect') dl.fill([rectPts(g.P, g.ex, g.ey, -g.hw, -g.hh, g.hw, g.hh)], { color: '#ffffff' }, pen);
-  dl.text(g.P, tagLabel(doc, t), { size, rot: t.vertical ? Math.PI / 2 : 0, ha: 'center', va: 'middle', color, family: fontFamily(tv(doc, t, 'font', 'Arial')), opaque: g.shape === 'none' });
+  dl.text(g.P, tagLabel(doc, t), { size, rot: t.vertical ? Math.PI / 2 : 0, ha: 'center', va: 'middle', color, family: fontFamily(tv(doc, t, 'font', 'Arial')), wf: tv<number | undefined>(doc, t, 'widthFactor', undefined), opaque: g.shape === 'none' });
   if (t.leader) {
     const E = leaderEnd(t, g);
     if (dist(E, g.P) > Math.max(g.hw, g.hh) * 1.05) drawLeader(dl, [edgeToward(g, E), E], tv(doc, t, 'leaderArrow', 'none') as TickKind, tv(doc, t, 'arrowSize', 2), pen);
@@ -123,7 +123,7 @@ function roomGeo(doc: Doc, t: Tag, view: View, scale: number): (TagGeo & { rows:
   const A = tagAnchor(doc, t, view); if (!A) return null;
   const rows0 = roomLines(doc, t);
   let H = 0; let W = 0;
-  const rows = rows0.map((r) => { const hh = r.size * scale; const y = H; H += hh * 1.35; W = Math.max(W, textWidth(r.s, hh) * (r.bold ? 1.08 : 1)); return { ...r, y: y + hh / 2 }; });
+  const rows = rows0.map((r) => { const hh = r.size * scale; const y = H; H += hh * 1.35; W = Math.max(W, textWidth(r.s, hh, fontWf({ wf: tv<number | undefined>(doc, t, 'widthFactor', undefined), family: fontFamily(tv(doc, t, 'font', 'Arial')) })) * (r.bold ? 1.08 : 1)); return { ...r, y: y + hh / 2 }; });
   H -= rows0.length ? rows0[rows0.length - 1].size * scale * 0.35 : 0;
   const pad = 1.2 * scale;
   const ex = fromAngle(t.vertical ? Math.PI / 2 : 0); const ey = perp(ex);
@@ -136,7 +136,7 @@ function drawRoomTag(dl: DisplayList, t: Tag, doc: Doc, view: View): void {
   const color = tv(doc, t, 'color', '#000000'); const pen: Pen = { w: 1, color };
   const fam = fontFamily(tv(doc, t, 'font', 'Arial'));
   if (g.shape === 'rect') dl.fill([rectPts(g.P, g.ex, g.ey, -g.hw, -g.hh, g.hw, g.hh)], { color: '#ffffff' }, pen);
-  for (const r of g.rows) dl.text(add(g.P, mul(g.ey, r.y)), r.s, { size: r.size, bold: r.bold, rot: t.vertical ? Math.PI / 2 : 0, ha: 'center', va: 'middle', color, family: fam, opaque: g.shape !== 'rect' });
+  for (const r of g.rows) dl.text(add(g.P, mul(g.ey, r.y)), r.s, { size: r.size, bold: r.bold, rot: t.vertical ? Math.PI / 2 : 0, ha: 'center', va: 'middle', color, family: fam, wf: tv<number | undefined>(doc, t, 'widthFactor', undefined), opaque: g.shape !== 'rect' });
   if (t.leader) { const E = leaderEnd(t, g); if (dist(E, g.P) > Math.max(g.hw, g.hh) * 1.05) drawLeader(dl, [edgeToward(g, E), E], 'dot', 1.5, pen); }
 }
 
@@ -192,6 +192,7 @@ registerCategory({
     { key: 'content', label: 'Inhalt', group: GROUPS.text, type: 'select', options: [['auto', 'Nach Kategorie'], ['mark', 'Kennzeichen'], ['type', 'Typname'], ['typeMark', 'Typkennzeichen'], ['comments', 'Kommentare']], get: (t) => t.content ?? 'auto', set: (_t, v) => ({ content: v }) },
     { key: 'size', label: 'Textgröße (mm)', group: GROUPS.text, type: 'number', get: (t) => t.size ?? 2.5, set: (_t, v) => ({ size: Math.max(0.5, v) }) },
     { key: 'font', label: 'Schriftart', group: GROUPS.text, type: 'select', options: FONTS, get: (t) => t.font ?? 'Arial', set: (_t, v) => ({ font: v }) },
+    widthFactorProp(GROUPS.text),
     { key: 'color', label: 'Farbe', group: GROUPS.graphics, type: 'color', get: (t) => t.color ?? '#000000', set: (_t, v) => ({ color: v }) },
     { key: 'leaderArrow', label: 'Führungslinie: Pfeilspitze', group: GROUPS.graphics, type: 'select', options: TICK_OPTIONS, get: (t) => t.leaderArrow ?? 'none', set: (_t, v) => ({ leaderArrow: v }) },
     { key: 'arrowSize', label: 'Pfeilgröße (mm)', group: GROUPS.graphics, type: 'number', get: (t) => t.arrowSize ?? 2, set: (_t, v) => ({ arrowSize: Math.max(0.5, v) }) },
@@ -209,6 +210,7 @@ registerCategory({
     { key: 'nameSize', label: 'Textgröße Name (mm)', group: GROUPS.text, type: 'number', get: (t) => t.nameSize ?? 3.5, set: (_t, v) => ({ nameSize: Math.max(0.5, v) }) },
     { key: 'size', label: 'Textgröße (mm)', group: GROUPS.text, type: 'number', get: (t) => t.size ?? 2.5, set: (_t, v) => ({ size: Math.max(0.5, v) }) },
     { key: 'font', label: 'Schriftart', group: GROUPS.text, type: 'select', options: FONTS, get: (t) => t.font ?? 'Arial', set: (_t, v) => ({ font: v }) },
+    widthFactorProp(GROUPS.text),
     { key: 'frame', label: 'Rahmen', group: GROUPS.graphics, type: 'bool', get: (t) => t.frame !== false, set: (_t, v) => ({ frame: v }) },
     { key: 'color', label: 'Farbe', group: GROUPS.graphics, type: 'color', get: (t) => t.color ?? '#000000', set: (_t, v) => ({ color: v }) },
   ],

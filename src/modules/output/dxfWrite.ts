@@ -2,6 +2,7 @@
 // LINE, LWPOLYLINE/POLYLINE, CIRCLE, ARC, TEXT, MTEXT, HATCH (Vollfüllung) bzw. SOLID (R12).
 // Rein funktional (ohne DOM) – auch in Node testbar.
 import type { DisplayList, Prim, Font } from '../../render/displayList';
+import { fontWf } from '../../render/displayList';
 import { penMm, DASHES, DashName, halftone, Pen } from '../../render/styles';
 import { V2, BBox, emptyBox, extendBox, boxValid, boxOverlap, boxContains, intersection, arcPoints } from '../../core/geom';
 
@@ -184,6 +185,7 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
       head('MTEXT', it, undefined, 'AcDbMText');
       g(E, 10, q.x); g(E, 20, q.y); g(E, 30, 0); g(E, 40, hgt); g(E, 41, 0); g(E, 71, att); g(E, 72, 1);
       let t = lines.map((l) => l.replace(/\\/g, '\\\\').replace(/[{}]/g, (c) => '\\' + c)).join('\\P');
+      const wfm = fontWf(f); if (wfm !== 1) t = `\\W${num(wfm)};` + t;
       while (t.length > 250) { g(E, 3, t.slice(0, 250)); t = t.slice(250); }
       g(E, 1, t); g(E, 7, 'STANDARD');
       const a = f.rot ?? 0; g(E, 11, Math.cos(a)); g(E, 21, Math.sin(a)); g(E, 31, 0);
@@ -198,6 +200,7 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
       head('TEXT', it, undefined, 'AcDbText');
       g(E, 10, q.x); g(E, 20, q.y); g(E, 30, 0); g(E, 40, hgt); g(E, 1, (f.underline ? '%%u' : '') + l);
       if (rot) g(E, 50, rot);
+      const wf = fontWf(f); if (wf !== 1) g(E, 41, wf);
       g(E, 7, 'STANDARD');
       if (ha || va) { g(E, 72, ha); g(E, 11, q.x); g(E, 21, q.y); g(E, 31, 0); }
       if (!r12) g(E, 100, 'AcDbText');

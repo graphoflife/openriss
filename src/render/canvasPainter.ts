@@ -1,5 +1,5 @@
 // Zeichnet eine Display-Liste auf ein Canvas.
-import { DisplayList, Prim } from './displayList';
+import { DisplayList, Prim, fontWf } from './displayList';
 import { PATTERNS, DASHES, penMm, halftone, Pen, Fill, TileCtx } from './styles';
 import { Mat2, apply, BBox, boxOverlap } from '../core/geom';
 
@@ -200,7 +200,10 @@ export function paint(ctx: CanvasRenderingContext2D, dl: DisplayList, xf: Mat2, 
         ctx.save();
         ctx.translate(c.x * dpr, c.y * dpr);
         ctx.rotate(flip ? -rot : rot);
-        ctx.font = `${f.italic ? 'italic ' : ''}${f.bold ? 'bold ' : ''}${px}px ${f.family ?? 'Arial, Helvetica, sans-serif'}`;
+        const wf = fontWf(f);
+        if (wf !== 1) ctx.scale(wf, 1);
+        const fam = wf !== 1 && !f.wf ? (f.family ?? '').replace(/"[^"]*(narrow|condensed|schmal)[^"]*",\s*/i, '') : f.family;
+        ctx.font = `${f.italic ? 'italic ' : ''}${f.bold ? 'bold ' : ''}${px}px ${fam || 'Arial, Helvetica, sans-serif'}`;
         ctx.textAlign = f.ha ?? 'left';
         const lines = it.s.split('\n'); const lh = px * 1.25;
         const va = f.va ?? 'baseline';

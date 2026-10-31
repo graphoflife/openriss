@@ -20,7 +20,7 @@ import { defaultDef } from './modules/output/schedules';
 import { exportDxf as dxfOf } from './modules/output/dxfCommands';
 import { exportIfc as ifcOf, IfcOptions } from './modules/view3d/ifc';
 export type { IfcOptions } from './modules/view3d/ifc';
-import { sheetsToPdfAsync } from './modules/output/pdf';
+import { sheetsToPdfAsync, registerPdfFont as registerPdfFont0 } from './modules/output/pdf';
 import { absFiles as absFilesOf } from './modules/structure/steel';
 import { applyLocale as applyLocaleTo } from './modules/annotation/locale';
 import { addRevision as addRevisionTo } from './modules/output/sheets';
@@ -204,6 +204,10 @@ export async function finishCli(o: CliOptions): Promise<void> {
   const path: any = await import('node:path' as string);
   const safe = (s: string) => s.replace(/[^\w\-.äöüÄÖÜß ]+/g, '_');
   if (o.fitElevations || elevationsAtTemplate(doc)) fitElevations();
+  for (const [fam, files] of Object.entries(o.fonts ?? {})) {
+    const [r, b] = files.split(',');
+    registerPdfFont(fam, new Uint8Array(fs.readFileSync(r)), b ? new Uint8Array(fs.readFileSync(b)) : undefined);
+  }
   syncStairBearings();
   const shs = sheets();
   if (o.out) { fs.writeFileSync(o.out, saveProject()); console.log(`Projekt: ${o.out}`); }
@@ -230,6 +234,8 @@ export async function finishCli(o: CliOptions): Promise<void> {
     console.log(`ABS: ${files.length} Dateien → ${o.abs}`);
   }
 }
+/** Weitere TrueType-Schrift fürs PDF einbetten (z.B. «Arial Narrow»); Texte dieser Familie nutzen sie statt des Breitenfaktors */
+export const registerPdfFont = (family: string, regular: Uint8Array, bold?: Uint8Array) => registerPdfFont0(family, regular, bold);
 /** Vektor-PDF (eine Seite je Plan/Ansicht, Planformat exakt) */
 export async function exportPdf(ids: Id[] = sheets().map((s) => s.id), monochrome = false): Promise<Uint8Array> {
   return sheetsToPdfAsync(doc, ids, { monochrome });

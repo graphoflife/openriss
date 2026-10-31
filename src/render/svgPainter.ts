@@ -1,5 +1,5 @@
 // Display-Liste → SVG (Papier-mm). Basis für SVG-Export und Drucken/PDF.
-import { DisplayList } from './displayList';
+import { DisplayList, fontWf } from './displayList';
 import { PATTERNS, DASHES, penMm, halftone, Fill, Pen } from './styles';
 import { Mat2, apply, BBox, matScale, isMirror, matAngle } from '../core/geom';
 
@@ -104,7 +104,8 @@ export class SvgBuilder {
           const tspans = lines.map((l, j) => `<tspan x="0" y="${n(y0 + j * lh)}">${esc(l)}</tspan>`).join('');
           const deco = f.underline ? ' text-decoration="underline"' : '';
           const bg = f.opaque ? ` style="paint-order:stroke" stroke="#ffffff" stroke-width="${n(f.size * 0.3)}"` : '';
-          this.body.push(`<text transform="translate(${n(c.x)} ${n(c.y)}) rotate(${n(rot)})" font-family="Arial, Helvetica, sans-serif" font-size="${n(f.size)}"${f.bold ? ' font-weight="bold"' : ''}${f.italic ? ' font-style="italic"' : ''} text-anchor="${anchor}" dominant-baseline="${base}" fill="${col(f.color, it.ht)}"${deco}${bg}>${tspans}</text>`);
+          const wf = fontWf(f);
+          this.body.push(`<text transform="translate(${n(c.x)} ${n(c.y)}) rotate(${n(rot)})${wf !== 1 ? ` scale(${n(wf)} 1)` : ''}" font-family="Arial, Helvetica, sans-serif" font-size="${n(f.size)}"${f.bold ? ' font-weight="bold"' : ''}${f.italic ? ' font-style="italic"' : ''} text-anchor="${anchor}" dominant-baseline="${base}" fill="${col(f.color, it.ht)}"${deco}${bg}>${tspans}</text>`);
           break;
         }
       }

@@ -7,10 +7,10 @@ import { newId } from '../../core/doc';
 import { V2, add, sub, mul, apply, applyVec, isMirror, fromAngle, pointInPoly } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
 import { View, isPlanLike, isSectionLike, makeProjector, levelElev, projectInfo, DEFAULT_RANGE } from '../../core/view';
-import { DisplayList, textWidth } from '../../render/displayList';
+import { DisplayList, textWidth, fontWf } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
-import { fontFamily, solid, myPlacement, previewEl, FONTS, PREV_COL } from './common';
+import { fontFamily, solid, myPlacement, previewEl, FONTS, PREV_COL, typeWf, widthFactorProp } from './common';
 import { fmtDec, fmtElevMode, fmtElevSigned, DecSep, ElevMode } from './numfmt';
 import { defaultSpotType } from './types';
 
@@ -33,14 +33,14 @@ export interface Spot extends El {
 }
 
 interface SpotStyle {
-  symbol: string; symSize: number; size: number; prefix: string; dec: number; color: string; font: string;
+  symbol: string; symSize: number; size: number; prefix: string; dec: number; color: string; font: string; wf?: number;
   layout: 'din' | 'ch'; sep: DecSep; elevMode: ElevMode; slabRef: 'core' | 'all'; boxUK: boolean; boxD: boolean;
 }
 function spotStyle(doc: Doc, el: El): SpotStyle {
   const t: any = doc.get(el.typeId) ?? {};
   return {
     symbol: t.symbol ?? (el.kind === 'coord' ? 'cross' : 'half'), symSize: t.symSize ?? 2.5, size: t.size ?? 2.5,
-    prefix: t.prefix ?? '', dec: t.dec ?? (el.kind === 'coord' ? 3 : 2), color: t.color || '#000000', font: t.font ?? 'Arial',
+    prefix: t.prefix ?? '', dec: t.dec ?? (el.kind === 'coord' ? 3 : 2), color: t.color || '#000000', font: t.font ?? 'Arial', wf: typeWf(t),
     layout: t.layout === 'ch' ? 'ch' : 'din', sep: t.sep === '.' ? '.' : ',', elevMode: el.elevMode ?? t.elevMode ?? 'rel',
     slabRef: t.slabRef === 'all' ? 'all' : 'core', boxUK: t.boxUK !== false, boxD: t.boxD !== false,
   };
@@ -143,11 +143,11 @@ function drawSlabBox(dl: DisplayList, el: Spot, doc: Doc, view: View, st: SpotSt
   const s = dl.scale; const c = symPos(el, s);
   const pen: Pen = { w: 1, color: st.color }; const pen2: Pen = { w: 2, color: st.color };
   const lines = slabLines(doc, view, el, st); const size = st.size * s; const lh = size * 1.5;
-  const w = Math.max(...lines.map((l) => textWidth(l, size))) + 2.4 * s; const hh = lines.length * lh + 1.0 * s;
+  const w = Math.max(...lines.map((l) => textWidth(l, size, fontWf({ wf: st.wf, family: fontFamily(st.font) })))) + 2.4 * s; const hh = lines.length * lh + 1.0 * s;
   if (el.leader && el.off) dl.line(el.p, c, pen, { ns: true });
   const x0 = c.x - w / 2, x1 = c.x + w / 2, y0 = c.y - hh / 2, y1 = c.y + hh / 2;
   dl.fill([[{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }]], { color: '#ffffff' }, pen2, { sub: 'box' });
-  const font = { size: st.size, color: st.color, family: fontFamily(st.font), ha: 'center' as const };
+  const font = { size: st.size, color: st.color, family: fontFamily(st.font), wf: st.wf, ha: 'center' as const };
   // Zeilenblock (Versalhöhe ≈ 0,72 · Schriftgröße) vertikal zentriert
   const top = c.y + ((lines.length - 1) * lh + 0.72 * size) / 2;
   lines.forEach((l, i) => dl.text({ x: c.x, y: top - 0.72 * size - i * lh }, l, font));
@@ -160,8 +160,8 @@ function drawSpot(dl: DisplayList, el: Spot, doc: Doc, view: View): void {
   const sx = el.flipX ? -1 : 1, sy = el.flipY ? -1 : 1;
   const tip = symPos(el, s);
   const txt = spotText(doc, view, el); const size = st.size * s; const gap = 0.8 * s;
-  const lines = txt.split('\n'); const tw = Math.max(...lines.map((l) => textWidth(l, size)));
-  const font = { size: st.size, color: st.color, family: fontFamily(st.font) };
+  const lines = txt.split('\n'); const tw = Math.max(...lines.map((l) => textWidth(l, size, fontWf({ wf: st.wf, family: fontFamily(st.font) }))));
+  const font = { size: st.size, color: st.color, family: fontFamily(st.font), wf: st.wf };
   if (el.kind === 'coord') {
     const r = 0.8 * s;
     dl.circle(el.p, r, pen); dl.line(add(el.p, { x: -r * 1.6, y: 0 }), add(el.p, { x: r * 1.6, y: 0 }), pen, { ns: true }); dl.line(add(el.p, { x: 0, y: -r * 1.6 }), add(el.p, { x: 0, y: r * 1.6 }), pen, { ns: true });
@@ -270,6 +270,7 @@ function spotTypeProps(): PropDef[] {
     { key: 'color', label: 'Farbe', group: g.graphics, type: 'color', get: (t) => t.color ?? '#000000', set: (_t, v) => ({ color: v }) },
     { key: 'size', label: 'Textgröße (mm)', group: g.text, type: 'number', get: (t) => t.size ?? 2.5, set: (_t, v) => ({ size: Math.max(0.5, v) }) },
     { key: 'font', label: 'Schriftart', group: g.text, type: 'select', options: FONTS, get: (t) => t.font ?? 'Arial', set: (_t, v) => ({ font: v }) },
+    widthFactorProp(g.text),
     { key: 'prefix', label: 'Präfix', group: g.text, type: 'text', get: (t) => t.prefix ?? '', set: (_t, v) => ({ prefix: v }) },
     { key: 'dec', label: 'Nachkommastellen (m)', group: g.text, type: 'int', get: (t) => t.dec ?? 2, set: (_t, v) => ({ dec: Math.max(0, Math.min(4, Math.round(v))) }) },
     { key: 'sep', label: 'Dezimaltrennzeichen', group: g.text, type: 'select', options: [[',', 'Komma (+2,75)'], ['.', 'Punkt (+2.75)']], get: (t) => (t.sep === '.' ? '.' : ','), set: (_t, v) => ({ sep: v }) },

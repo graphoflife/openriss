@@ -11,6 +11,7 @@ import { zlibSync, unzlibSync } from 'fflate';
 import type { Doc, Id } from '../../core/doc';
 import type { View } from '../../core/view';
 import type { Font, Prim } from '../../render/displayList';
+import { fontWf } from '../../render/displayList';
 import { PATTERNS, DASHES, penMm, Fill, Pen, TileCtx } from '../../render/styles';
 import type { V2 } from '../../core/geom';
 import { hasDom } from '../../core/env';
@@ -34,11 +35,34 @@ const ITALIC = Math.tan((12 * Math.PI) / 180);
 let FONTS: TtfFont[] | null = null;
 let loading: Promise<void> | null = null;
 
+/** weitere Schriftfamilien (z.B. «Arial Narrow»): Name (klein) → Index normal/fett in FONTS */
+const FAMILY = new Map<string, [number, number]>();
+const EXTRA: { family: string; regular: Uint8Array; bold?: Uint8Array }[] = [];
+function addExtraFonts(): void {
+  if (!FONTS) return;
+  for (const x of EXTRA) {
+    const k = x.family.toLowerCase(); if (FAMILY.has(k)) continue;
+    const base = x.family.replace(/[^A-Za-z0-9]+/g, '');
+    const r = parseTtf(x.regular, base); FONTS.push(r); const ri = FONTS.length - 1;
+    let bi = ri; if (x.bold) { FONTS.push(parseTtf(x.bold, base + '-Bold')); bi = FONTS.length - 1; }
+    FAMILY.set(k, [ri, bi]);
+  }
+}
 /** Eigene TrueType-Schriften setzen (Normal, Fett) – z.B. aus einer Datei gelesen */
 export function setPdfFonts(regular: Uint8Array, bold: Uint8Array = regular): void {
   const r = parseTtf(regular, 'Sans');
   FONTS = [r, bold === regular ? r : parseTtf(bold, 'Sans-Bold')];
+  FAMILY.clear(); addExtraFonts();
 }
+/**
+ * Weitere TrueType-Schrift für eine Familie einbetten (z.B. «Arial Narrow» aus einer eigenen Datei).
+ * Texte dieser Familie verwenden dann die Schrift selbst statt Liberation Sans mit Breitenfaktor.
+ */
+export function registerPdfFont(family: string, regular: Uint8Array, bold?: Uint8Array): void {
+  EXTRA.push({ family, regular, bold }); addExtraFonts();
+}
+/** Familienname aus der CSS-Schriftliste («"Arial Narrow", Arial, …» → arial narrow) */
+const familyKey = (fam: string | undefined) => (fam ?? '').replace(/^\s*"([^"]+)".*$/, '$1').split(',')[0].trim().toLowerCase();
 export const pdfFontsLoaded = (): boolean => !!FONTS;
 
 /** Lädt die eingebetteten Schriften (Liberation Sans) – im Browser als eigener Code-Teil */
@@ -458,7 +482,10 @@ class Painter {
     if (!(size > 0) || !s) return;
     const col = this.col(f.color, ht, true); if (!col) return;
     this.flush();
-    const fi = f.bold && this.r.fonts.length > 1 ? 1 : 0; const F = this.r.fonts[fi];
+    // eigene Schrift der Familie (registerPdfFont), sonst Liberation Sans mit Breitenfaktor (Schmalschrift)
+    const fam = FAMILY.get(familyKey(f.family));
+    const fi = fam ? fam[f.bold ? 1 : 0] : f.bold && this.r.fonts.length > 1 ? 1 : 0; const F = this.r.fonts[fi];
+    const wf = fam ? (f.wf && f.wf > 0 ? f.wf : 1) : fontWf(f);
     const lines = s.split('\n').map((l) => layoutLine(F, l));
     // Schreibrichtung auf dem Papier (Text wird nie gespiegelt)
     const rot = f.rot ?? 0; const ux = Math.cos(rot), uy = Math.sin(rot);
@@ -471,6 +498,7 @@ class Painter {
     this.setAlpha(1);
     const snap = { ...this.st };
     o.push('q', `${n(dx)} ${n(dy)} ${n(-dy)} ${n(dx)} ${n(this.X(p))} ${n(this.Y(p))} cm`);
+    if (wf !== 1) o.push(`${n(wf)} 0 0 1 0 0 cm`);
     if (f.opaque || f.box) {
       const wm = Math.max(...lines.map((l) => l.width)) * size; const x0 = xOf(wm);
       const top = b0 + size, bot = b0 - (nl - 1) * lh;

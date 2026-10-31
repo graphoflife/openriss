@@ -23,6 +23,14 @@ export const FONTS: [string, string][] = [
   ['Arial', 'Arial'], ['Arial Narrow', 'Arial Narrow'], ['ISOCPEUR', 'ISOCPEUR'], ['Times New Roman', 'Times New Roman'], ['Courier New', 'Courier New'],
 ];
 export const fontFamily = (f: string | undefined): string => `${f && f !== 'Arial' ? `"${f}", ` : ''}Arial, Helvetica, sans-serif`;
+/** Breitenfaktor eines Typs: eigener Wert, sonst Vorgabe der Schrift (Schmalschrift 0.82) */
+export const typeWf = (t: { widthFactor?: number; font?: string } | undefined): number | undefined => (t?.widthFactor && t.widthFactor > 0 ? t.widthFactor : undefined);
+/** Typeigenschaft «Breitenfaktor» (wie in CAD: 1 = normal, 0.82 ≈ Arial Narrow) */
+export const widthFactorProp = (group: string): any => ({
+  key: 'widthFactor', label: 'Breitenfaktor', group, type: 'number',
+  get: (t: any) => t.widthFactor ?? (/narrow|condensed|schmal/i.test(t.font ?? '') ? 0.82 : 1),
+  set: (_t: any, v: number) => ({ widthFactor: v > 0.2 && v <= 3 ? v : undefined }),
+});
 
 export const solid = (color: string): Fill => ({ color, pattern: 'solid', patColor: color });
 

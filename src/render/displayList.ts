@@ -18,6 +18,8 @@ export interface Font {
   underline?: boolean;
   color?: string;
   family?: string;
+  /** Breitenfaktor (z.B. 0.82 für Schmalschrift); fehlt = 1, bei «Narrow»-Familien 0.82 */
+  wf?: number;
   /** Hintergrund abdecken (wie "Hintergrund: Undurchsichtig") */
   opaque?: boolean;
   box?: boolean;
@@ -161,16 +163,22 @@ export function forEachSeg(it: Prim, cb: (a: V2, b: V2) => void): void {
   }
 }
 
-export function textWidth(s: string, size: number): number {
+export function textWidth(s: string, size: number, wf = 1): number {
   let w = 0;
   for (const ch of s) w += /[il.,:;|'!1]/.test(ch) ? 0.3 : /[mwMW]/.test(ch) ? 0.85 : /[A-ZÄÖÜ]/.test(ch) ? 0.68 : 0.56;
-  return w * size;
+  return w * size * wf;
+}
+/** Breitenfaktor einer Schrift: Typwert, sonst 0.82 für Schmalschriften («Arial Narrow»), sonst 1 */
+export const NARROW_WF = 0.82;
+export function fontWf(f: { wf?: number; family?: string }): number {
+  return f.wf && f.wf > 0 ? f.wf : /narrow|condensed|schmal/i.test(f.family ?? '') ? NARROW_WF : 1;
 }
 /** Eckpunkte des Textrahmens (Ansichts-mm) */
 export function textBox(it: { p: V2; s: string; font: Font }, scale: number): V2[] {
   const lines = it.s.split('\n');
   const size = it.font.size * scale;
-  const w = Math.max(...lines.map((l) => textWidth(l, size)));
+  const wf = fontWf(it.font);
+  const w = Math.max(...lines.map((l) => textWidth(l, size, wf)));
   const lh = size * 1.25; const h = lh * lines.length - (lh - size);
   const ha = it.font.ha ?? 'left'; const va = it.font.va ?? 'baseline';
   const x0 = ha === 'left' ? 0 : ha === 'center' ? -w / 2 : -w;

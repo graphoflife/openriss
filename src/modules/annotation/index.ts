@@ -51,7 +51,8 @@ registerCommand({ id: 'filledRegion', label: 'Füllbereich', icon: 'region', tip
 toolCmd('insulation', 'Dämmung', 'insulation', [], 'Dämmung entlang einer Linie zeichnen (Breite in der Optionsleiste).', [], () => new InsulationTool());
 toolCmd('detailComponent', 'Detailbauteil', 'detail', [], 'Detailbauteil platzieren: Bruchlinie, Abdichtung, Holzlatte/Kantholz. Leertaste dreht.', ['detail'], () => new DetailTool());
 registerCommand({ id: 'revisionCloud', label: 'Revisionswolke', icon: 'cloud', tip: 'Revisionswolke skizzieren.', run: startCloudTool });
-toolCmd('symbol', 'Symbol', 'symbol', [], 'Symbol platzieren: Nordpfeil oder Gefällepfeil.', [], () => new SymbolTool());
+toolCmd('symbol', 'Symbol', 'symbol', [], 'Symbol platzieren: Nordpfeil, Gefällepfeil oder Massstabsleiste.', [], () => new SymbolTool());
+toolCmd('scalebar', 'Massstabs- leiste', 'symbol', [], 'Grafische Massstabsleiste platzieren (Felder schwarz/weiss, passt sich dem Massstab der Ansicht an – auch im Ansichtsfenster auf dem Plan).', [], () => { SymbolTool.kind = 'scalebar'; return new SymbolTool(); });
 
 // ------------------------------------------------------------ Kontextbefehle (Register „Ändern | …“)
 const sel1 = (cats: string[]): El | null => { const s = app.selected(); return s.length === 1 && cats.includes(s[0].cat) ? s[0] : null; };

@@ -215,12 +215,56 @@ export class DetailTool extends Tool {
 }
 
 // ------------------------------------------------------------ Symbole
-export interface SymEl extends El { cat: 'symbol'; viewId: Id; kind: 'north' | 'slope'; p: V2; rot?: number; size?: number; b?: V2; slope?: number; label?: string }
+export interface SymEl extends El {
+  cat: 'symbol'; viewId: Id; kind: 'north' | 'slope' | 'scalebar'; p: V2; rot?: number; size?: number; b?: V2; slope?: number; label?: string;
+  /** Massstabsleiste: Gesamtlänge (Modell-mm; fehlt = automatisch ≈ 50 mm Papier), Teilung, Unterteilung des ersten Felds, Höhe (Papier-mm) */
+  length?: number; div?: number; sub?: number; height?: number; unit?: 'm' | 'cm'; showScale?: boolean;
+}
+
+/** «schöne» Länge (1, 2, 5 × 10^k) bis höchstens v */
+export function niceLength(v: number): number {
+  const e = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1e-9))));
+  for (const f of [5, 2, 1]) if (f * e <= v + 1e-9) return f * e;
+  return e;
+}
+/** Gesamtlänge einer Massstabsleiste (Modell-mm) */
+export const scalebarLength = (el: SymEl, scale: number) => (el.length && el.length > 0 ? el.length : niceLength(50 * scale));
+
+/** Massstabsleiste (Schweizer Darstellung): Felder schwarz/weiss, erstes Feld unterteilt, Beschriftung 0 … L m */
+function drawScalebar(dl: DisplayList, el: SymEl): void {
+  const s = dl.scale; const L = scalebarLength(el, s);
+  const div = Math.max(1, Math.round(el.div ?? (Math.abs(L / niceLength(L / 4) - 5) < 1e-6 ? 5 : 4)));
+  const sub = Math.max(0, Math.round(el.sub ?? 2));
+  const h = (el.height ?? 2) * s; const rot = el.rot ?? 0;
+  const ex = fromAngle(rot), ey = fromAngle(rot + Math.PI / 2);
+  const Q = (x: number, y: number) => add(el.p, add(mul(ex, x), mul(ey, y)));
+  const pen: Pen = { w: 1 };
+  const box = (x0: number, x1: number, y0: number, y1: number, black: boolean) =>
+    dl.fill([[Q(x0, y0), Q(x1, y0), Q(x1, y1), Q(x0, y1)]], black ? solid('#000000') : { color: '#ffffff' }, pen, { ns: true });
+  const d = L / div;
+  for (let i = 0; i < div; i++) {
+    if (i === 0 && sub > 1) {
+      // erstes Feld: Unterteilung oben/unten gegengleich
+      for (let k = 0; k < sub; k++) { box((k * d) / sub, ((k + 1) * d) / sub, h / 2, h, k % 2 === 0); box((k * d) / sub, ((k + 1) * d) / sub, 0, h / 2, k % 2 === 1); }
+    } else box(i * d, (i + 1) * d, 0, h, i % 2 === 0);
+  }
+  const unit = el.unit ?? (L < 1000 ? 'cm' : 'm'); const f = unit === 'cm' ? 10 : 1000;
+  const fmt = (v: number) => fmtNum(v / f, v / f < 10 && (v / f) % 1 ? 2 : 0).replace(/[.,]?0+$/, '') || '0';
+  const ts = Math.max(1.8, (el.height ?? 2) * 1.0);
+  const td = readable(ex);
+  for (let i = 0; i <= div; i++) {
+    const x = i * d;
+    dl.text(Q(x, -0.8 * s), fmt(x) + (i === div ? ' ' + unit : ''), { size: ts, rot: td.ang, ha: i === div ? 'left' : 'center', va: 'top' }, { ns: true });
+  }
+  if (sub > 1) dl.text(Q(d / sub, -0.8 * s), fmt(d / sub), { size: ts * 0.85, rot: td.ang, ha: 'center', va: 'top' }, { ns: true });
+  if (el.showScale) dl.text(Q(0, h + 1 * s), el.label || 'M 1:' + Math.round(s), { size: ts, rot: td.ang, ha: 'left', va: 'bottom' }, { ns: true });
+}
 
 function slopeText(el: SymEl): string { return el.label || fmtNum(el.slope ?? 2, 1) + ' %'; }
 
 function drawSymbol(dl: DisplayList, el: SymEl): void {
   const s = dl.scale; const pen: Pen = { w: 2 };
+  if (el.kind === 'scalebar') { drawScalebar(dl, el); return; }
   if (el.kind === 'slope') {
     const b = el.b ?? add(el.p, { x: 15 * s, y: 0 }); const d = sub(b, el.p); if (Math.hypot(d.x, d.y) < 1e-6) return;
     dl.line(el.p, b, { w: 2 }, { sub: 'line' });
@@ -245,10 +289,12 @@ registerCategory({
   grips: (el, _doc, view) => {
     const sy = el as SymEl;
     if (sy.kind === 'slope') return [{ id: 'a', p: sy.p, kind: 'end' }, { id: 'b', p: sy.b ?? sy.p, kind: 'end' }];
+    if (sy.kind === 'scalebar') return [{ id: 'a', p: sy.p, kind: 'end' }, { id: 'len', p: add(sy.p, fromAngle(sy.rot ?? 0, scalebarLength(sy, view.scale))), kind: 'end', tip: 'Länge ändern (auf 1, 2, 5 gerundet)' }];
     const R = ((sy.size ?? 12) * view.scale) / 2;
     return [{ id: 'r', p: add(sy.p, fromAngle((sy.rot ?? 0) + Math.PI / 2, R * 1.25)), kind: 'end', tip: 'Drehen (Nordrichtung)' }];
   },
   dragGrip: (el, id, p) => {
+    if (id === 'len') { const d = sub(p, el.p); const l = d.x * Math.cos(el.rot ?? 0) + d.y * Math.sin(el.rot ?? 0); return l > 1 ? { length: niceLength(l) } : undefined; }
     if (id === 'a') return { p };
     if (id === 'b') return { b: p };
     if (id === 'r') return { rot: snapAngle(angleOf(sub(p, el.p)) - Math.PI / 2) };
@@ -260,7 +306,15 @@ registerCategory({
     return { p: apply(m, sy.p), rot: isMirror(m) || matAngle(m) ? angleOf(up) - Math.PI / 2 : sy.rot };
   },
   center: (el) => (el.kind === 'slope' && el.b ? mid(el.p, el.b) : el.p),
-  props: (el) => (el.kind === 'slope' ? [
+  props: (el) => (el.kind === 'scalebar' ? [
+    { key: 'length', label: 'Länge (0 = automatisch)', group: GROUPS.dims, type: 'length', get: (e) => e.length ?? 0, set: (_e, v) => ({ length: v > 0 ? v : undefined }) },
+    { key: 'div', label: 'Teilung (Felder)', group: GROUPS.dims, type: 'int', get: (e) => e.div ?? 0, set: (_e, v) => ({ div: v > 0 ? v : undefined }) },
+    { key: 'sub', label: 'Unterteilung erstes Feld', group: GROUPS.dims, type: 'int', get: (e) => e.sub ?? 2, set: (_e, v) => ({ sub: Math.max(0, v) }) },
+    { key: 'height', label: 'Höhe (Papier-mm)', group: GROUPS.graphics, type: 'number', get: (e) => e.height ?? 2, set: (_e, v) => ({ height: Math.max(0.5, v) }) },
+    { key: 'unit', label: 'Einheit', group: GROUPS.text, type: 'select', options: [['', 'automatisch'], ['m', 'm'], ['cm', 'cm']], get: (e) => e.unit ?? '', set: (_e, v) => ({ unit: v || undefined }) },
+    { key: 'showScale', label: 'Massstab anschreiben', group: GROUPS.text, type: 'bool', get: (e) => !!e.showScale, set: (_e, v) => ({ showScale: !!v }) },
+    { key: 'rot', label: 'Drehung', group: GROUPS.graphics, type: 'angle', get: (e) => e.rot ?? 0, set: (_e, v) => ({ rot: v }) },
+  ] : el.kind === 'slope' ? [
     { key: 'slope', label: 'Gefälle (%)', group: GROUPS.dims, type: 'number', get: (e) => e.slope ?? 2, set: (_e, v) => ({ slope: v }) },
     { key: 'label', label: 'Text (leer = Gefälle)', group: GROUPS.text, type: 'text', get: (e) => e.label ?? '', set: (_e, v) => ({ label: v || undefined }) },
     { key: 'comments', label: 'Kommentare', group: GROUPS.identity, type: 'text', get: (e) => e.comments ?? '', set: (_e, v) => ({ comments: v }) },
@@ -273,15 +327,16 @@ registerCategory({
 
 export class SymbolTool extends Tool {
   id = 'symbol'; label = 'Symbol'; kinds = ANNO_KINDS;
-  static kind: 'north' | 'slope' = 'north';
+  static kind: 'north' | 'slope' | 'scalebar' = 'north';
   static slope = 2;
   private start: V2 | null = null; private cur: V2 | null = null; private rot = 0;
   prompt(): string {
     if (SymbolTool.kind === 'slope') return this.start ? 'Endpunkt (Pfeilspitze, Richtung des Gefälles).' : 'Startpunkt des Gefällepfeils.';
+    if (SymbolTool.kind === 'scalebar') return 'Klicken Sie, um die Massstabsleiste zu platzieren (linkes Ende). Leertaste dreht um 45°.';
     return 'Klicken Sie, um den Nordpfeil zu platzieren. Leertaste dreht um 45°.';
   }
   options(): OptionItem[] {
-    const o: OptionItem[] = [{ kind: 'select', key: 'kind', label: 'Symbol', value: SymbolTool.kind, options: [['north', 'Nordpfeil'], ['slope', 'Gefällepfeil']], onChange: (v) => { SymbolTool.kind = v as any; this.start = null; app.emit('tool'); app.setPrompt(this.prompt()); } }];
+    const o: OptionItem[] = [{ kind: 'select', key: 'kind', label: 'Symbol', value: SymbolTool.kind, options: [['north', 'Nordpfeil'], ['slope', 'Gefällepfeil'], ['scalebar', 'Massstabsleiste']], onChange: (v) => { SymbolTool.kind = v as any; this.start = null; app.emit('tool'); app.setPrompt(this.prompt()); } }];
     if (SymbolTool.kind === 'slope') o.push({ kind: 'number', key: 'slope', label: 'Gefälle (%)', value: SymbolTool.slope, width: 50, onChange: (v) => { SymbolTool.slope = v; } });
     return o;
   }
@@ -290,6 +345,7 @@ export class SymbolTool extends Tool {
   move(e: ToolEvent): void { this.cur = e.p; }
   private make(a: V2, b: V2 | null, view: View): SymEl {
     if (SymbolTool.kind === 'slope') return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'slope', p: a, b: b ?? a, slope: SymbolTool.slope } as SymEl;
+    if (SymbolTool.kind === 'scalebar') return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'scalebar', p: a, rot: this.rot || undefined } as SymEl;
     return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'north', p: a, rot: this.rot || undefined } as SymEl;
   }
   down(e: ToolEvent): void {
@@ -300,7 +356,7 @@ export class SymbolTool extends Tool {
       this.start = null; return;
     }
     const el = this.make(e.p, null, e.view);
-    app.doc.transaction('Nordpfeil', () => app.doc.add(el));
+    app.doc.transaction(SymbolTool.kind === 'scalebar' ? 'Massstabsleiste' : 'Nordpfeil', () => app.doc.add(el));
   }
   escape(): boolean { if (this.start) { this.start = null; return true; } return false; }
   preview(dl: DisplayList, vp: any): void {
