@@ -1,6 +1,10 @@
 // Fundamente: Einzelfundament (Punkt, unter Stützen), Streifenfundament (unter Wänden, von der Wand
 // abgeleitet und gehostet), Fundamentplatte/Bodenplatte (Skizze). Grundriss: verdeckt gestrichelt / Schnitt.
-import { flatSurface } from '../../views/surfaces';
+import { flatSurface, surfaceOf } from '../../views/surfaces';
+import {
+  SlopeDef, SlopeArrow, slopeOf, slopeDz, slopedSurface, slopedLayerSolids, slopedArea, slopeGrips, dragSlopeGrip, transformSlope, moveSlope,
+  slopeProps, drawSlopedSlabPlan, slopeText, slopePset,
+} from '../architecture/slope';
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
@@ -24,7 +28,11 @@ import { Column, colInfo } from './column';
 export interface FoundType extends TypeEl { b?: number; l?: number; t: number; mat?: Id; description?: string }
 export interface FoundIso extends El { cat: 'foundationIsolated'; p: V2; rot: number; levelId: Id; offset: number }
 export interface FoundWall extends El { cat: 'foundationWall'; hostId: Id; ecc?: number }
-export interface FoundSlab extends El { cat: 'foundationSlab'; loops: V2[][]; levelId: Id; offset: number }
+export interface FoundSlab extends El {
+  cat: 'foundationSlab'; loops: V2[][]; levelId: Id; offset: number;
+  /** Gefälle (Neigungspfeil / Profil), siehe Geschossdecke */
+  slope?: SlopeDef | SlopeArrow;
+}
 
 interface FInfo { polys: Poly[]; z0: number; z1: number; mat?: Id; area: number }
 
@@ -60,6 +68,8 @@ export function foundInfo(doc: Doc, el: El): FInfo | null {
 
 function foundSolids(doc: Doc, el: El) {
   const fi = foundInfo(doc, el); if (!fi) return [];
+  const sl = el.cat === 'foundationSlab' ? slopeOf(el) : null;
+  if (sl) return slopedLayerSolids(fi.polys, (p) => fi.z1 + slopeDz(sl, p), [{ mat: fi.mat ?? 'm_beton', t: fi.z1 - fi.z0 }], sl);
   return fi.polys.map((p) => ({ faces: prism(p[0], fi.z0, fi.z1, p.slice(1)), mat: fi.mat }));
 }
 const volume = (doc: Doc, el: El) => { const fi = foundInfo(doc, el); return fi ? fi.area * (fi.z1 - fi.z0) : 0; };
@@ -100,6 +110,8 @@ const fieldsCommon = () => [
 
 function drawFound(ctx: any, el: El): void {
   const fi = foundInfo(ctx.doc, el); if (!fi) return;
+  const sl = el.cat === 'foundationSlab' ? slopeOf(el) : null; const surf = sl && surfaceOf(ctx.doc, el);
+  if (sl && surf) { drawSlopedSlabPlan(ctx, el, fi.polys, sl, surf, { styleCat: 'foundation', hidden: true, belowLimit: ctx.depthZ - 3000, mask: false }); return; }
   drawStructPlan(ctx, 'foundation', fi.polys, fi.z0, fi.z1, fi.mat, { below: 'hidden', belowLimit: ctx.depthZ - 3000 });
 }
 
@@ -140,22 +152,37 @@ registerCategory({
 
 registerCategory({
   cat: 'foundationSlab', label: 'Fundamentplatte', plural: 'Fundamentplatten', hasTypes: true, planOrder: 4,
-  surface: (el, doc) => { const fi = foundInfo(doc, el); return fi ? flatSurface(fi.z1, fi.z0) : null; },
+  surface: (el, doc) => {
+    const fi = foundInfo(doc, el); if (!fi) return null; const sl = slopeOf(el);
+    return sl ? slopedSurface(sl, fi.z1, fi.z1 - fi.z0, fi.polys) : flatSurface(fi.z1, fi.z0);
+  },
   drawPlan: drawFound,
   solids: (el, doc) => foundSolids(doc, el),
   center: (el) => { const r = (el as FoundSlab).loops?.[0]; if (!r?.length) return null; let x = 0, y = 0; for (const p of r) { x += p.x; y += p.y; } return { x: x / r.length, y: y / r.length }; },
-  transform: (el, m, _doc, view) => (isPlanLike(view) ? { loops: (el as FoundSlab).loops.map((r) => r.map((p) => apply(m, p))) } : undefined),
-  translate3d: (el, d) => { const f = el as FoundSlab; return { loops: f.loops.map((r) => r.map((p) => ({ x: p.x + d.x, y: p.y + d.y }))), offset: (f.offset ?? 0) + d.z }; },
+  grips: (el, _doc, view) => slopeGrips(el, view),
+  dragGrip: (el, id, p) => dragSlopeGrip(el, id, p),
+  transform: (el, m, _doc, view) => {
+    if (!isPlanLike(view)) return; const sl = slopeOf(el);
+    return { loops: (el as FoundSlab).loops.map((r) => r.map((p) => apply(m, p))), ...(sl ? { slope: transformSlope(sl, m) } : {}) };
+  },
+  translate3d: (el, d) => {
+    const f = el as FoundSlab; const sl = slopeOf(el);
+    return { loops: f.loops.map((r) => r.map((p) => ({ x: p.x + d.x, y: p.y + d.y }))), offset: (f.offset ?? 0) + d.z, ...(sl ? { slope: moveSlope(sl, d) } : {}) };
+  },
+  ifc: (el, doc) => { const ps = slopePset(slopeOf(el), foundInfo(doc, el)?.polys ?? []); return ps ? { entity: 'IFCSLAB', predefined: 'BASESLAB', psets: { CH_Gefaelle: ps as any } } : null; },
   tagText: (el, doc) => doc.get(el.typeId)?.name ?? '',
-  props: () => [
+  props: (el) => [
     ...levelProps(),
     { key: 'area', label: 'Fläche', group: GROUPS.dims, type: 'area', get: (e, doc) => foundInfo(doc, e)?.area ?? 0 },
     { key: 'perim', label: 'Umfang', group: GROUPS.dims, type: 'readonly', get: (e) => fmtLen((e as FoundSlab).loops?.reduce((s, r) => s + perimeter(r), 0) ?? 0) },
     { key: 'edit', label: 'Begrenzung', group: GROUPS.constraints, type: 'button', get: () => 'Bearbeiten…', action: (e) => editSlabSketch(e as FoundSlab) },
+    ...slopeProps(el, (e, doc) => foundInfo(doc, e)?.polys ?? [], (e, doc) => foundInfo(doc, e)?.z1 ?? 0),
     ...commonFoundProps(),
   ],
   typeProps: () => foundTypeProps('slab'),
-  scheduleFields: () => [...fieldsCommon(), { key: 'level', label: 'Ebene', get: (el, doc) => doc.get(el.levelId)?.name ?? '' }],
+  scheduleFields: () => [...fieldsCommon(), { key: 'level', label: 'Ebene', get: (el, doc) => doc.get(el.levelId)?.name ?? '' },
+    { key: 'slopedArea', label: 'Geneigte Fläche', unit: 'area', get: (el, doc) => slopedArea(foundInfo(doc, el)?.polys ?? [], slopeOf(el)) },
+    { key: 'slope', label: 'Gefälle', get: (el) => slopeText(slopeOf(el)) }],
 });
 
 function editSlabSketch(f: FoundSlab): void {

@@ -7,6 +7,7 @@ import './room';
 import './ceiling';
 import './roof';
 import './attach';
+import './ramp';
 import './stair';
 import './railing';
 import './opening';

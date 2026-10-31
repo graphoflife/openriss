@@ -6,7 +6,8 @@ import { V2, V3, sub, dot, norm3, cross3, sub3, len3, Poly } from '../../core/ge
 import { catDef, CategoryDef } from '../../core/registry';
 import type { Material } from '../../core/view';
 import { solidsOf } from '../../views/sectionEngine';
-import { Wall, wallInfo, wallShape, wallOpenings, wallType, typeThickness } from '../../elements/wall';
+import { Wall, wallInfo, wallShape, wallOpenings, wallType, typeThickness, wallBounds } from '../../elements/wall';
+import { slopeOf } from '../architecture/slope';
 import { floorType, floorTop, floorThick } from '../architecture/floor';
 import { loopsArea, shaftArea, shaftRange, Shaft } from '../architecture/common';
 import { foundInfo } from '../structure/foundation';
@@ -89,13 +90,13 @@ function wallPlan(o: IfcOut, doc: Doc, w: Wall): BodyPlan | null {
   const reps: number[] = [];
   reps.push(o.shapeRep(o.axis, 'Axis', 'Curve2D', [o.add(`IFCPOLYLINE((${ref(o.pt2({ x: 0, y: 0 }))},${ref(o.pt2({ x: wi.L, y: 0 }))}))`)]));
   let predefined = '.STANDARD.';
-  if (!w.attachTopId) {
+  if (!w.attachTopId && !w.attachBaseId) {
     // ungeschnittener Grundrissumriss (inkl. Eckverbindungen) senkrecht extrudiert
     const ring = wallShape(doc, w).ring.map(loc);
     const solid = styledSolid(o, w, o.extrusion(o.profile(ring), null, wi.z1 - wi.z0), coreMat);
     reps.push(o.shapeRep(o.body, 'Body', 'SweptSolid', [solid]));
   } else {
-    // oben an Dach/Decke fixiert: Körper als Brep (bereits ausgeschnitten), Öffnungen trotzdem als Elemente
+    // oben an Dach/Decke bzw. unten an (geneigter) Platte fixiert: Körper als Brep (bereits ausgeschnitten), Öffnungen trotzdem als Elemente
     const items: number[] = [];
     for (const s of solidsOf(doc, w)) {
       const b = o.brep(s.faces, (p) => ptIn(frame, p));
@@ -122,7 +123,8 @@ function wallPlan(o: IfcOut, doc: Doc, w: Wall): BodyPlan | null {
   }
   // Schichtaufbau: Achse = Wandmitte; Außenseite links (+y) ohne Spiegelung
   const mat = t?.layers.some((l) => l.t > 0) ? (w.flip ? layerUsage(o, t, 'AXIS2', 'POSITIVE', -T / 2) : layerUsage(o, t, 'AXIS2', 'NEGATIVE', T / 2)) : singleMat(o, coreMat);
-  return { frame, reps, openings, mat, predefined, z: [wi.z0, wi.z1] };
+  const wb = wallBounds(doc, w);
+  return { frame, reps, openings, mat, predefined, z: [wb.zMin, wb.zMax] };
 }
 
 // ------------------------------------------------------------ Platten (Decke, Fundamentplatte, Fundamente)
@@ -223,6 +225,8 @@ function beamPlan(o: IfcOut, doc: Doc, bm: Beam): BodyPlan | null {
 
 /** Körper als Extrusion (ungeschnitten, mit Öffnungen) für bekannte Kategorien; sonst null (→ Brep) */
 export function bodyPlan(o: IfcOut, doc: Doc, el: El): BodyPlan | null {
+  // geneigte Platten / Rampen: Brep aus den Körpern (je Schicht)
+  if ((el.cat === 'floor' || el.cat === 'foundationSlab') && slopeOf(el)) return null;
   switch (el.cat) {
     case 'wall': return wallPlan(o, doc, el as Wall);
     case 'floor': return floorPlan(o, doc, el);

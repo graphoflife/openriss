@@ -10,7 +10,7 @@ import { registerCategory, registerCommand, registerContextPanel, registerPanel,
 import { View, makeProjector } from '../../core/view';
 import type { DisplayList } from '../../render/displayList';
 import { fmtLen, fmtElev } from '../../core/units';
-import { Wall, wallInfo, wallShape, wallOpenings, layerOffsets, WallInfo } from '../../elements/wall';
+import { Wall, wallInfo, wallShape, wallOpenings, layerOffsets, WallInfo, wallBounds } from '../../elements/wall';
 import { sectionGeomPatch } from '../../elements/datums';
 import { Rebar, rebarGeo } from './rebar/rebar';
 import { addRebarRule, addViewProps } from './rebar/filter';
@@ -53,7 +53,8 @@ export function devGeomPatch(doc: Doc, w: Wall, side: DevSide, v: Partial<View>)
   const P = (u: number) => add(add(wi.c0, mul(wi.d, u)), mul(nV, wi.T / 2 + GAP));
   const mL = 300 + 22 * s, mR = 300 + 13 * s;
   const A = sgn > 0 ? P(u0 - mL) : P(u1 + mL), B = sgn > 0 ? P(u1 + mR) : P(u0 - mR);
-  const crop = { on: true, show: false, min: { x: 0, y: wi.z0 - 300 - 13 * s }, max: { x: 0, y: wi.z1 + 300 + 3 * s } };
+  const wb = wallBounds(doc, w); // Hülle (Ober-/Unterkante mit Profil)
+  const crop = { on: true, show: false, min: { x: 0, y: wb.zMin - 300 - 13 * s }, max: { x: 0, y: wb.zMax + 300 + 3 * s } };
   return { ...sectionGeomPatch(A, B, { ...v, crop } as View), far: wi.T + 2 * GAP };
 }
 
@@ -93,7 +94,7 @@ export function rebarOnSide(doc: Doc, el: Rebar, dv: DevInfo): boolean {
     o0 = Math.min(o0, o); o1 = Math.max(o1, o); u0 = Math.min(u0, u); u1 = Math.max(u1, u); z0 = Math.min(z0, q.z); z1 = Math.max(z1, q.z);
   }
   // nur Stäbe innerhalb der Wanddicke (unabhängig vom Host), die die Wandfläche berühren
-  if (o0 < -wi.T / 2 - 20 || o1 > wi.T / 2 + 20 || u1 < -wi.T - 50 || u0 > wi.L + wi.T + 50 || z1 < wi.z0 - 50 || z0 > wi.z1 + 50) return false;
+  if (o0 < -wi.T / 2 - 20 || o1 > wi.T / 2 + 20 || u1 < -wi.T - 50 || u0 > wi.L + wi.T + 50 || z1 < wallBounds(doc, w).zMin - 50 || z0 > wallBounds(doc, w).zMax + 50) return false;
   // Seite bezogen auf die Mitte des Tragkerns (Schichtaufbau mit Dämmung aussen)
   const core = layerOffsets(doc, w).filter((l) => l.lay.core).flatMap((l) => [l.o0 * wi.ext, l.o1 * wi.ext]);
   const c0m = core.length ? Math.min(...core) : -wi.T / 2, c1m = core.length ? Math.max(...core) : wi.T / 2;
@@ -134,29 +135,30 @@ function drawDevAnno(dl: DisplayList, el: El, doc: Doc, view: View): void {
       dl.text(c, t, { size: 2, ha: 'center', va: 'middle', opaque: true });
     }
   }
-  // Höhenangaben Wandfuss / Wandkopf
-  if (el.labels !== false) for (const [z, t] of [[wi.z1, 'OK Wand'], [wi.z0, 'UK Wand']] as [number, string][]) {
+  // Höhenangaben Wandfuss / Wandkopf (mit Profil: höchster bzw. tiefster Punkt)
+  const wb = wallBounds(doc, w);
+  if (el.labels !== false) for (const [z, t] of [[wb.zMax, wb.top ? 'OK Wand max.' : 'OK Wand'], [wb.zMin, wb.base ? 'UK Wand min.' : 'UK Wand']] as [number, string][]) {
     dl.line({ x: ra - 20 * s, y: z }, { x: xa, y: z }, pen, { ns: true });
     dl.text({ x: ra - 1.5 * s, y: z + 0.5 * s }, `${t} ${fmtElev(z)}`, { size: 2, ha: 'right', va: 'bottom' });
   }
   if (el.chains === false) return;
   const xdir = { x: 1, y: 0 }, ydir = { x: 0, y: 1 };
-  const yb = wi.z0 - 300;
+  const yb = wb.zMin - 300;
   // Kette 1: Wandenden, Öffnungen, Arbeitsfugen
   const xs = new Set<number>([xa, xb]);
   for (const o of ops) for (const u of [o.u0, o.u1]) { const x = X(u); if (x > xa + 1 && x < xb - 1) xs.add(Math.round(x)); }
   for (const j of doc.all('joint')) if (j.hostId === w.id && typeof j.t === 'number' && j.kind !== 'wallH') { const x = X(j.t); if (x > xa + 1 && x < xb - 1) xs.add(Math.round(x)); }
-  const ch1 = [...xs].sort((a, b) => a - b).map((x) => ({ x, y: wi.z0 }));
+  const ch1 = [...xs].sort((a, b) => a - b).map((x) => ({ x, y: wb.zMin }));
   if (ch1.length > 2) drawChain(dl, doc, view, ch1, xdir, { x: 0, y: yb - 5 * s });
   // Kette 2: Gesamtlänge der Wandfläche
-  drawChain(dl, doc, view, [{ x: xa, y: wi.z0 }, { x: xb, y: wi.z0 }], xdir, { x: 0, y: yb - (ch1.length > 2 ? 10 : 5) * s });
+  drawChain(dl, doc, view, [{ x: xa, y: wb.zMin }, { x: xb, y: wb.zMin }], xdir, { x: 0, y: yb - (ch1.length > 2 ? 10 : 5) * s });
   // Höhenketten rechts: Öffnungskanten, Gesamthöhe
-  const zs = new Set<number>([wi.z0, wi.z1]);
-  for (const o of ops) for (const z of [o.z0, o.z1]) if (z > wi.z0 + 1 && z < wi.z1 - 1) zs.add(Math.round(z));
+  const zs = new Set<number>([wb.zMin, wb.zMax]);
+  for (const o of ops) for (const z of [o.z0, o.z1]) if (z > wb.zMin + 1 && z < wb.zMax - 1) zs.add(Math.round(z));
   const xr = rb + 300;
   const ch3 = [...zs].sort((a, b) => a - b).map((y) => ({ x: xb, y }));
   if (ch3.length > 2) drawChain(dl, doc, view, ch3, ydir, { x: xr + 5 * s, y: 0 });
-  drawChain(dl, doc, view, [{ x: xb, y: wi.z0 }, { x: xb, y: wi.z1 }], ydir, { x: xr + (ch3.length > 2 ? 10 : 5) * s, y: 0 });
+  drawChain(dl, doc, view, [{ x: xb, y: wb.zMin }, { x: xb, y: wb.zMax }], ydir, { x: xr + (ch3.length > 2 ? 10 : 5) * s, y: 0 });
 }
 
 registerCategory({

@@ -12,3 +12,6 @@ add('stairL', `<path d="M3 21 V12 H12 V3 H21 V21 Z" fill="#fff" stroke="currentC
 add('stairU', `<path d="M3 21 V3 H21 V21 H14 V9 H10 V21 Z" fill="#fff" stroke="currentColor"/><path d="M3 17 H10 M3 13 H10 M14 17 H21 M14 13 H21" stroke="currentColor" stroke-width=".8"/>`);
 add('opening', `<rect x="3" y="3" width="18" height="18" fill="${G}" stroke="currentColor"/><rect x="8" y="8" width="8" height="8" fill="#fff" stroke="currentColor"/>`);
 add('attach', `<path d="M4 4 H20 L12 10 Z" fill="${G}" stroke="currentColor"/><rect x="8" y="12" width="8" height="10" fill="#fff" stroke="currentColor"/>`);
+add('attachBase', `<rect x="8" y="2" width="8" height="12" fill="#fff" stroke="currentColor"/><path d="M3 20 L21 15 V19 L3 22 Z" fill="${G}" stroke="currentColor"/>`);
+add('ramp', `<path d="M2 8 H6 L18 17 H22" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 12 H6 L18 21 H22" fill="none" stroke="currentColor" stroke-width=".8"/><path d="M8 5 L15 10 M15 10 L12 10 M15 10 L14 7.5" fill="none" stroke="${B}"/>`);
+add('slopeArrow', `<rect x="3" y="3" width="18" height="18" fill="#e8f0fa" stroke="currentColor"/><path d="M6 12 H16" stroke="${B}" stroke-width="1.6"/><path d="M19 12 L15 9.5 V14.5 Z" fill="${B}"/>`);

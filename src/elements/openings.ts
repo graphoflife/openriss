@@ -3,7 +3,7 @@ import type { Doc, El, Id } from '../core/doc';
 import { V2, add, sub, mul, dot, norm, perp, mid, apply, Mat2, isMirror, projectT, sideDist, cross, lineLine, V3, closestOnLine } from '../core/geom';
 import { registerCategory, CategoryDef, PlanCtx, SectionCtx, Solid, PropDef, GROUPS, TempDim, Grip } from '../core/registry';
 import { TypeEl, levelElev, View, isPlanLike } from '../core/view';
-import { Wall, wallInfo, WallInfo, wallAt } from './wall';
+import { Wall, wallInfo, WallInfo, wallAt, wallBounds, profMax } from './wall';
 import { box3, catPen } from '../views/sectionEngine';
 import { fmtLen } from '../core/units';
 import { DisplayList } from '../render/displayList';
@@ -39,9 +39,12 @@ export function openingType(doc: Doc, o: Opening): (DoorType | WindowType) | und
 export function openingWidth(doc: Doc, o: Opening): number { return openingType(doc, o)?.width ?? 1000; }
 export function openingHeight(doc: Doc, o: Opening): number { return openingType(doc, o)?.height ?? 2000; }
 export function hostOf(doc: Doc, o: Opening): Wall | undefined { return doc.get<Wall>(o.hostId); }
-/** absolute Unterkante */
+/** absolute Unterkante (Tür in Wand mit Unterkantenprofil, z.B. auf einer Rampe: höchster Punkt der Wandunterkante im Türbereich + Brüstung) */
 export function openingZ0(doc: Doc, o: Opening): number {
-  const w = hostOf(doc, o); return levelElev(doc, w?.levelId) + (o.sill ?? 0);
+  const w = hostOf(doc, o);
+  const base = w && o.cat === 'door' ? wallBounds(doc, w).base : null;
+  if (base) { const W = openingWidth(doc, o); return profMax(base, o.t - W / 2, o.t + W / 2) + (o.sill ?? 0); }
+  return levelElev(doc, w?.levelId) + (o.sill ?? 0);
 }
 
 interface Local { wi: WallInfo; u0: number; u1: number; um: number; T: number; P: (u: number, v: number) => V2; side: 1 | -1; hand: 1 | -1; }

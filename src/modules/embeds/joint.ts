@@ -158,7 +158,7 @@ function drawJointSection(ctx: SectionCtx, el: El): void {
     const A = v3(pts[i], sl.top), B = v3(pts[i + 1], sl.top); const da = ctx.depth(A), db = ctx.depth(B);
     if ((da < 0) === (db < 0)) continue;
     const X = lerp(pts[i], pts[i + 1], da / (da - db));
-    const p0 = ctx.toView(v3(X, sl.bot - 0.8 * s)), p1 = ctx.toView(v3(X, sl.top + 0.8 * s));
+    const dz = sl.dz(X); const p0 = ctx.toView(v3(X, sl.bot + dz - 0.8 * s)), p1 = ctx.toView(v3(X, sl.top + dz + 0.8 * s));
     dl.poly(zigzag(p0, p1, 0.8 * s, 3), AF_PEN);
     lbl({ x: p1.x, y: p1.y + 1 * s }, 'AF');
   }

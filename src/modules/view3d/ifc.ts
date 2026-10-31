@@ -50,7 +50,7 @@ function ifcClass(el: El): IfcClass {
 /** Common-Pset zur Entität (für Hook-Entitäten) */
 const COMMON_PSET: Record<string, string> = {
   IFCWALL: 'Pset_WallCommon', IFCSLAB: 'Pset_SlabCommon', IFCFOOTING: 'Pset_FootingCommon', IFCCOLUMN: 'Pset_ColumnCommon', IFCBEAM: 'Pset_BeamCommon',
-  IFCDOOR: 'Pset_DoorCommon', IFCWINDOW: 'Pset_WindowCommon', IFCBUILDINGELEMENTPROXY: 'Pset_BuildingElementProxyCommon', IFCMEMBER: 'Pset_MemberCommon', IFCPLATE: 'Pset_PlateCommon',
+  IFCDOOR: 'Pset_DoorCommon', IFCWINDOW: 'Pset_WindowCommon', IFCBUILDINGELEMENTPROXY: 'Pset_BuildingElementProxyCommon', IFCMEMBER: 'Pset_MemberCommon', IFCPLATE: 'Pset_PlateCommon', IFCRAMP: 'Pset_RampCommon',
 };
 /** Entitäten ohne PredefinedType */
 const NO_PT = new Set(['IFCFLOWSEGMENT', 'IFCFLOWTERMINAL', 'IFCFLOWFITTING', 'IFCFLOWCONTROLLER', 'IFCFLOWMOVINGDEVICE', 'IFCFLOWSTORAGEDEVICE', 'IFCFLOWTREATMENTDEVICE',

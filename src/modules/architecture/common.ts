@@ -10,7 +10,7 @@ import { TypeEl, levelElev, materialOf, materialOptions, View, isPlanLike } from
 import { cached, hostedBy } from '../../core/cache';
 import { prism, catPen, cutFill } from '../../views/sectionEngine';
 import { fmtLen, fmtNum, parseLen } from '../../core/units';
-import { Wall, wallInfo, wallShape } from '../../elements/wall';
+import { Wall, wallInfo, wallShape, wallBounds } from '../../elements/wall';
 import { orientRings, footprintOf, cleanMulti, cleanRing } from './roofGeom';
 import type { Pen } from '../../render/styles';
 import { app } from '../../app';
@@ -165,8 +165,8 @@ export function cutWallMask(ctx: PlanCtx): MultiPoly {
   return cached(ctx.doc, 'archWallMask', ctx.view.id + ':' + Math.round(ctx.cutZ), () => {
     const rings: Poly[] = [];
     for (const w of ctx.doc.all<Wall>('wall')) {
-      const wi = wallInfo(ctx.doc, w);
-      if (wi.L < 1 || !(wi.z0 <= ctx.cutZ && wi.z1 > ctx.cutZ)) continue;
+      const wi = wallInfo(ctx.doc, w); const wb = wallBounds(ctx.doc, w);
+      if (wi.L < 1 || !(wb.zMin <= ctx.cutZ && wb.zMax > ctx.cutZ)) continue;
       rings.push([wallShape(ctx.doc, w).ring]);
     }
     return rings.length ? union(rings) : [];
