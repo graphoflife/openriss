@@ -5,7 +5,7 @@ import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, sub, mul, dot, perp, dist, fromAngle, angleOf, apply, applyVec, isMirror, matAngle, deg, rad } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
-import type { View } from '../../core/view';
+import { View, annoViewId, annoIn } from '../../core/view';
 import { DisplayList, textWidth } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
@@ -218,7 +218,7 @@ export function editTextEl(el0: TextEl, vpIn?: any): void {
     if (!s.trim()) { doc.transaction('Text löschen', () => doc.remove(el.id)); return; }
     doc.transaction('Text bearbeiten', () => doc.update(el.id, { s }));
   };
-  if (vp && vp.view?.id === el.viewId && vp.toScreen) {
+  if (vp && vp.view && annoIn(app.doc, el, vp.view) && vp.toScreen) {
     const st = textStyle(doc, el);
     openTextEditor(vp, { p: el.p, rot: el.rot, sizePaper: st.size, widthPaper: el.w, ha: el.ha, bold: st.bold, italic: st.italic }, el.s, save);
     return;
@@ -269,7 +269,7 @@ export class TextTool extends Tool {
     openTextEditor(e.vp, { p, sizePaper: st.size, widthPaper: w, ha: TextTool.ha, bold: st.bold, italic: st.italic }, '', (txt) => {
       this.editing = false; this.closedAt = performance.now();
       if (txt && txt.trim()) {
-        const el: TextEl = { id: newId('tx'), cat: 'text', viewId: view.id, typeId: pr.typeId, p, s: txt.replace(/\s+$/, '') } as TextEl;
+        const el: TextEl = { id: newId('tx'), cat: 'text', viewId: annoViewId(app.doc, view), typeId: pr.typeId, p, s: txt.replace(/\s+$/, '') } as TextEl;
         if (w) el.w = w;
         if (TextTool.ha !== 'left') el.ha = TextTool.ha;
         if (tip) el.leaders = [tip];

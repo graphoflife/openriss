@@ -1,5 +1,6 @@
 // Ansichten: Grundriss, Deckenplan, Ansicht, Schnitt, 3D, Zeichnungsansicht, Plan (Blatt), Bauteilliste.
 import type { El, Doc, Id } from './doc';
+import { onCommit } from './doc';
 import { V2, V3, add3, mul3, cross3, norm3, dot3, sub3, BBox } from './geom';
 
 export type ViewKind = 'plan' | 'ceiling' | 'elevation' | 'section' | '3d' | 'drafting' | 'sheet' | 'schedule' | 'legend';
@@ -39,7 +40,83 @@ export interface View extends El {
   titleOnSheet?: string;
   /** Freie Felder je Ansichtsart (3D-Kamera, Bauteillisten-Definition …) */
   data?: any;
+  /** Abhängige Ansicht (Revit «Abhängige Ansicht duplizieren»): Primäransicht; alle Felder ausser DEP_OWN folgen ihr */
+  parentId?: Id;
+  /** Grundriss: Rahmen der Teilpläne (abhängige Ansichten derselben Ebene) mit Plannummern anzeigen */
+  depFrames?: boolean;
 }
+
+// ---------------------------------------------------------------- Abhängige Ansichten
+/** Eigene Felder einer abhängigen Ansicht; alle übrigen werden beim Schreiben mit der Primäransicht abgeglichen */
+export const DEP_OWN = new Set(['id', 'cat', 'name', 'crop', 'hostId', 'titleOnSheet', 'parentId', 'depFrames', 'pinned', 'mark', 'comments']);
+/** eigene Felder in data */
+export const DEP_OWN_DATA = new Set(['marker']);
+/** Primäransicht (Wurzel) einer Ansicht – die Ansicht selbst, wenn sie nicht abhängig ist */
+export function rootView<T extends View | undefined>(doc: Doc, v: T): T {
+  let r: View | undefined = v; let n = 0;
+  while (r?.parentId && n++ < 8) { const p = doc.get<View>(r.parentId); if (!p) break; r = p; }
+  return r as T;
+}
+/** Ansicht, der neue Beschriftungen gehören (bei abhängigen Ansichten die Primäransicht) */
+export function annoViewId(doc: Doc, v: View | null | undefined): Id {
+  return v ? rootView(doc, v).id : '';
+}
+/** Beschriftung gehört zur Ansicht (direkt oder über die Primäransicht einer abhängigen Ansicht) */
+export const annoIn = (doc: Doc, el: El, v: View): boolean => !!el.viewId && (el.viewId === v.id || (!!v.parentId && el.viewId === annoViewId(doc, v)));
+/** Abhängige Ansichten einer Primäransicht */
+export const dependentsOf = (doc: Doc, id: Id): View[] => doc.all<View>('view').filter((v) => v.parentId === id);
+
+const jsonEq = (a: any, b: any) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const ownData = (d: any) => { const o: any = {}; for (const k of DEP_OWN_DATA) if (d?.[k] !== undefined) o[k] = d[k]; return o; };
+const sharedData = (d: any) => { if (!d) return undefined; const o: any = {}; for (const k of Object.keys(d)) if (!DEP_OWN_DATA.has(k)) o[k] = d[k]; return Object.keys(o).length ? o : undefined; };
+/** Patch: geerbte Felder von src übernehmen (eigene Felder von dst bleiben) */
+export function inheritPatch(src: View, dst: View): Partial<View> {
+  const patch: any = {};
+  for (const k of new Set([...Object.keys(src), ...Object.keys(dst)])) {
+    if (DEP_OWN.has(k) || k === 'data') continue;
+    if (!jsonEq((src as any)[k], (dst as any)[k])) patch[k] = (src as any)[k];
+  }
+  if (!jsonEq(sharedData(src.data), sharedData(dst.data))) {
+    const d = { ...(sharedData(src.data) ?? {}), ...ownData(dst.data) };
+    patch.data = Object.keys(d).length ? d : undefined;
+  }
+  return patch;
+}
+/** Kopie einer Ansicht unabhängig machen (Duplizieren, Ansichtsfenster kopieren) */
+export function detachView(copy: View, src: View): View {
+  if (src.parentId) { delete copy.parentId; if (copy.hostId === src.parentId) delete copy.hostId; }
+  return copy;
+}
+
+/**
+ * Abgleich beim Schreiben (am Ende jeder Transaktion, gleicher Rückgängig-Schritt): Änderungen geerbter Felder einer
+ * abhängigen Ansicht gehen an die Primäransicht, die Primäransicht überträgt ihre Felder auf alle abhängigen.
+ */
+export function syncDependents(doc: Doc, before: ReadonlyMap<Id, El | null>): void {
+  const touched: View[] = [];
+  for (const id of [...before.keys()]) { const v = doc.get<View>(id); if (v?.cat === 'view') touched.push(v); }
+  if (!touched.length) return;
+  const roots = new Set<Id>();
+  for (const v of touched) {
+    if (!v.parentId) { roots.add(v.id); continue; }
+    const p = rootView(doc, v); if (p === v) continue;
+    const b = before.get(v.id) as View | null | undefined;
+    if (b) {
+      const up = inheritPatch(v, b);         // geänderte geerbte Felder der abhängigen Ansicht
+      const patch: any = {};
+      for (const k of Object.keys(up)) if (k !== 'data') patch[k] = (v as any)[k];
+      if ('data' in up) patch.data = (() => { const d = { ...(sharedData(v.data) ?? {}), ...ownData(p.data) }; return Object.keys(d).length ? d : undefined; })();
+      for (const k of Object.keys(patch)) if (jsonEq(patch[k], (p as any)[k])) delete patch[k];
+      if (Object.keys(patch).length) doc.update<View>(p.id, patch);
+    }
+    roots.add(p.id);
+  }
+  for (const rid of roots) {
+    const r = doc.get<View>(rid); if (!r) continue;
+    for (const d of dependentsOf(doc, rid)) { const patch = inheritPatch(r, d); if (Object.keys(patch).length) doc.update<View>(d.id, patch); }
+  }
+}
+onCommit(syncDependents);
 
 export const VIEW_KIND_LABEL: Record<ViewKind, string> = {
   plan: 'Grundriss', ceiling: 'Deckenplan', elevation: 'Ansicht', section: 'Schnitt', '3d': '3D-Ansicht',

@@ -5,7 +5,7 @@ import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, sub, mul, perp, dist, norm, fromAngle, apply, len } from '../../core/geom';
 import { registerCategory, catDef, onHook, PropDef, GROUPS, Grip, CategoryDef } from '../../core/registry';
-import { View, isPlanLike, typesOf } from '../../core/view';
+import { View, isPlanLike, typesOf, annoViewId, annoIn } from '../../core/view';
 import { DisplayList, textWidth } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
@@ -233,7 +233,7 @@ function defaultOffset(doc: Doc, el: El, view: View, leader: boolean): V2 {
 export function makeTag(doc: Doc, el: El, view: View, o: { leader?: boolean; vertical?: boolean; typeId?: Id } = {}): Tag | null {
   if (!anchorInView(doc, el, view)) return null;
   const room = isRoom(el);
-  const t: Tag = { id: newId(room ? 'rt' : 'tg'), cat: room ? 'roomtag' : 'tag', viewId: view.id, refId: el.id, off: defaultOffset(doc, el, view, !!o.leader) } as Tag;
+  const t: Tag = { id: newId(room ? 'rt' : 'tg'), cat: room ? 'roomtag' : 'tag', viewId: annoViewId(doc, view), refId: el.id, off: defaultOffset(doc, el, view, !!o.leader) } as Tag;
   const tid = o.typeId ?? typesOf(doc, t.cat)[0]?.id;
   if (tid) t.typeId = tid;
   if (o.leader) t.leader = true;
@@ -243,7 +243,8 @@ export function makeTag(doc: Doc, el: El, view: View, o: { leader?: boolean; ver
 
 /** Beschriftungen eines Elements in einer Ansicht */
 export function tagsOf(doc: Doc, refId: Id, viewId: Id): El[] {
-  return [...doc.all('tag'), ...doc.all('roomtag')].filter((t) => t.refId === refId && t.viewId === viewId);
+  const rid = annoViewId(doc, doc.get<View>(viewId)) || viewId; // abhängige Ansicht: Beschriftungen der Primäransicht
+  return [...doc.all('tag'), ...doc.all('roomtag')].filter((t) => t.refId === refId && (t.viewId === viewId || t.viewId === rid));
 }
 
 // ------------------------------------------------------------ Werkzeuge
@@ -303,7 +304,7 @@ export function tagAllDialog(): void {
   const onlySel = app.selection.size > 0;
   const ids = new Set<Id>();
   for (const it of dl.items) if (it.o) ids.add(it.o);
-  const tagged = new Set([...doc.all('tag'), ...doc.all('roomtag')].filter((t) => t.viewId === view.id).map((t) => t.refId));
+  const tagged = new Set([...doc.all('tag'), ...doc.all('roomtag')].filter((t) => annoIn(doc, t, view)).map((t) => t.refId));
   const byCat = new Map<string, El[]>();
   for (const id of ids) {
     const el = doc.get(id);

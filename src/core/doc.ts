@@ -33,6 +33,11 @@ type Listener = (cs: ChangeSet, origin: 'edit' | 'undo' | 'redo' | 'load') => vo
 
 const clone = <T>(o: T): T => (o === null || o === undefined ? o : JSON.parse(JSON.stringify(o)));
 
+/** Wird am Ende jeder (äußeren) Transaktion vor dem Abschluss aufgerufen: before = Zustände vor der Transaktion */
+export type CommitHook = (doc: Doc, before: ReadonlyMap<Id, El | null>) => void;
+const commitHooks: CommitHook[] = [];
+export function onCommit(h: CommitHook): void { commitHooks.push(h); }
+
 let idCounter = 0;
 export function newId(prefix = 'e'): Id {
   idCounter++;
@@ -88,6 +93,8 @@ export class Doc {
       this.txnDepth--;
       if (outer) {
         const t = this.txn!;
+        // Folgeänderungen (z.B. abhängige Ansichten) im selben Rückgängig-Schritt
+        if (ok && t.before.size) this.runCommitHooks(t.before);
         this.txn = null;
         if (!ok) {
           // Rollback
@@ -103,6 +110,12 @@ export class Doc {
         }
       }
     }
+  }
+
+  /** Abschluss-Hooks einer Transaktion: dürfen weitere Elemente ändern (werden mit aufgezeichnet) */
+  private runCommitHooks(before: Map<Id, El | null>): void {
+    this.txnDepth++;
+    try { for (const h of commitHooks) { try { h(this, before); } catch (e) { console.error(e); } } } finally { this.txnDepth--; }
   }
 
   private record(id: Id): void {
@@ -210,6 +223,7 @@ export class Doc {
   commitLive(): void {
     if (!this.live || !this.txn) return;
     const t = this.txn;
+    if (t.before.size) this.runCommitHooks(t.before);
     this.live = false; this.txn = null; this.txnDepth = 0;
     // nur echte Änderungen behalten
     const after = new Map<Id, El | null>();

@@ -7,7 +7,7 @@ import { V2, dist, sub, translation } from '../core/geom';
 import { catDef, emitHook, Grip } from '../core/registry';
 import type { DisplayList } from '../render/displayList';
 import { transformElements, copyTransform } from './ops';
-import type { View } from '../core/view';
+import { View, annoIn } from '../core/view';
 
 type Drag =
   | { kind: 'box'; s: V2; c: V2; additive: boolean; remove: boolean }
@@ -210,4 +210,4 @@ export function wallChain(id: Id): Id[] {
   return [...seen];
 }
 
-export function isEditableIn(el: El, view: View): boolean { return !el.viewId || el.viewId === view.id; }
+export function isEditableIn(el: El, view: View): boolean { return !el.viewId || annoIn(app.doc, el, view); }

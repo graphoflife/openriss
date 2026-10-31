@@ -7,7 +7,7 @@ import type { El, Id } from '../core/doc';
 import { newId } from '../core/doc';
 import { V2, add, sub, mul, norm, perp, dist, sideDist, projectT, dot, mid } from '../core/geom';
 import { catDef, emitHook, PlanCtx } from '../core/registry';
-import { View, Level, levels, levelAbove, levelOptions, typesOf, isPlanLike, isSectionLike, makeProjector } from '../core/view';
+import { View, Level, levels, levelAbove, levelOptions, typesOf, isPlanLike, isSectionLike, makeProjector, annoViewId } from '../core/view';
 import { Wall, wallInfo, wallAt, locOffset, wallType, LOC_LINE_LABELS, LocLine } from '../elements/wall';
 import { Opening, nextMark } from '../elements/openings';
 import { nextGridName, lineStyleOptions, sectionGeomPatch } from '../elements/datums';
@@ -101,7 +101,7 @@ export class LinesTool extends LineDrawTool {
   createSegment(a: V2, b: V2, arc?: any): void {
     const v = app.activeView()!;
     const base: any = { id: newId('li'), cat: 'line', a, b, style: this.style, arc: arc ?? undefined };
-    if (this.detail) base.viewId = v.id; else base.levelId = activeLevelId(v);
+    if (this.detail) base.viewId = annoViewId(app.doc, v); else base.levelId = activeLevelId(v);
     app.doc.add(base);
   }
   segmentPreview(dl: DisplayList, a: V2, b: V2): void { dl.line(a, b, PREVIEW); }

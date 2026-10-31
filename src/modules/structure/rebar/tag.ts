@@ -6,7 +6,7 @@ import type { Doc, El, Id } from '../../../core/doc';
 import { newId } from '../../../core/doc';
 import { V2, add, sub, mul, dot, dist, len, lerp, norm, perp, angleOf, fromAngle, closestOnSeg, apply } from '../../../core/geom';
 import { registerCategory, GROUPS } from '../../../core/registry';
-import type { View } from '../../../core/view';
+import { View, annoViewId } from '../../../core/view';
 import { DisplayList, textWidth } from '../../../render/displayList';
 import { Tool, ToolEvent, OptionItem } from '../../../tools/tool';
 import { normTextAngle } from '../../../elements/datums';
@@ -165,7 +165,7 @@ export function createRebarTag(doc: Doc, el: El, view: View, off?: V2, fmt: TagF
   const inf = info(doc, { refId: el.id, fmt }, view);
   if (!inf?.anchor) return null;
   const s = view.scale || 100;
-  const t: RebarTag = { id: newId('rt'), cat: 'rebarTag', viewId: view.id, refId: el.id, off: off ?? (extra.par ? { x: 0, y: 0 } : { x: 8 * s, y: 6 * s }), a0: inf.anchor, fmt, leader, ...extra };
+  const t: RebarTag = { id: newId('rt'), cat: 'rebarTag', viewId: annoViewId(doc, view), refId: el.id, off: off ?? (extra.par ? { x: 0, y: 0 } : { x: 8 * s, y: 6 * s }), a0: inf.anchor, fmt, leader, ...extra };
   doc.add(t);
   return t;
 }
@@ -228,7 +228,7 @@ export class RebarTagTool extends Tool {
   }
   /** Beschriftung an Cursorposition (parallel: nahe am Stab auf dem Stab, sonst mit Führungslinie) */
   private proto(el: El, view: View, p: V2, anchor: V2): RebarTag {
-    const t: RebarTag = { id: '__p', cat: 'rebarTag', viewId: view.id, refId: el.id, off: sub(p, anchor), a0: anchor, fmt: lastFmt, leader: lastLeader };
+    const t: RebarTag = { id: '__p', cat: 'rebarTag', viewId: annoViewId(app.doc, view), refId: el.id, off: sub(p, anchor), a0: anchor, fmt: lastFmt, leader: lastLeader };
     const path = lastPar ? tagPath(app.doc, el, view) : null;
     if (path) { const pr = pathProject(path, p); t.par = true; t.at = pr.at; t.off = pr.d < 2 * (view.scale || 100) ? { x: 0, y: 0 } : sub(p, pathPoint(path, pr.at).p); }
     return t;

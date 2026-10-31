@@ -3,7 +3,7 @@ import { app } from '../app';
 import type { Id, El } from '../core/doc';
 import { catDef } from '../core/registry';
 import { Mat2, V2, translation, apply, add3, mul3, emptyBox, extendBox, BBox, boxValid } from '../core/geom';
-import { View, isPlanLike, isSectionLike, makeProjector } from '../core/view';
+import { View, isPlanLike, isSectionLike, makeProjector, annoIn } from '../core/view';
 
 /** Wendet eine 2D-Transformation (in Ansichtskoordinaten) auf Elemente an. In Transaktion aufrufen. */
 export function transformElements(ids: Iterable<Id>, m: Mat2, view: View): number {
@@ -19,7 +19,7 @@ export function transformElements(ids: Iterable<Id>, m: Mat2, view: View): numbe
     const def = catDef(el.cat);
     if (!def) continue;
     let patch: Partial<El> | void = undefined;
-    const annotationHere = el.viewId === view.id || (def.annotation && el.viewId === view.id);
+    const annotationHere = annoIn(doc, el, view);
     if (annotationHere || isPlanLike(view) || view.kind === 'sheet' || view.kind === 'drafting' || view.kind === 'legend') {
       patch = def.transform?.(el, m, doc, view);
     } else if (pr && def.translate3d) {

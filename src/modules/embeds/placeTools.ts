@@ -4,7 +4,7 @@ import { app } from '../../app';
 import type { El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, mul, sub, eq, centroid } from '../../core/geom';
-import { levelElev, isPlanLike, isSectionLike, makeProjector, typesOf } from '../../core/view';
+import { levelElev, isPlanLike, isSectionLike, makeProjector, typesOf, annoViewId } from '../../core/view';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { LineDrawTool, PREVIEW } from '../../tools/drawTool';
 import { SketchTool } from '../../tools/sketchTool';
@@ -170,7 +170,7 @@ export class LegendTool extends Tool {
   down(e: ToolEvent): void {
     if (e.button !== 0) return;
     const v = e.view;
-    app.doc.transaction('Legende Dämmzonen', () => app.doc.add({ id: newId('lg'), cat: 'insulLegend', viewId: v.id, p: e.p } as El));
+    app.doc.transaction('Legende Dämmzonen', () => app.doc.add({ id: newId('lg'), cat: 'insulLegend', viewId: annoViewId(app.doc, v), p: e.p } as El));
     app.setTool(null);
   }
 }

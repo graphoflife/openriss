@@ -3,11 +3,12 @@
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
-import { registerCommand, registerViewport, registerDLBuilder, ViewportLike, catDef, allCats, PropDef, GROUPS, scheduleKind } from '../../core/registry';
+import { registerCommand, registerViewport, registerDLBuilder, ViewportLike, catDef, allCats, PropDef, GROUPS, scheduleKind, SchedSplit, SchedSeg, DLOpts, paginate } from '../../core/registry';
+import { cached } from '../../core/cache';
 import { View, levelOptions, materialOptions } from '../../core/view';
 import { fmtLen, fmtArea, fmtVolume, fmtNum, parseLen, parseNum, parseAngle, unitSettings } from '../../core/units';
 import { DisplayList, textWidth } from '../../render/displayList';
-import { boxCorners, V2 } from '../../core/geom';
+import { boxCorners, V2, translation } from '../../core/geom';
 import { buildViewDL } from '../../views/viewBuilder';
 import { modal, toast } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
@@ -33,6 +34,8 @@ export interface SchedDef {
   sums: string[];
   /** eigene Spaltenüberschriften */
   labels?: Record<string, string>;
+  /** Umbruch langer Listen in Abschnitte (Spalten/Pläne) mit Übertrag */
+  split?: SchedSplit;
 }
 export const FILTER_OPS: [FilterOp, string][] = [['eq', 'gleich'], ['ne', 'ungleich'], ['gt', 'größer als'], ['ge', 'größer als oder gleich'], ['lt', 'kleiner als'], ['le', 'kleiner als oder gleich'], ['has', 'enthält'], ['nhas', 'enthält nicht']];
 
@@ -198,8 +201,24 @@ function passes(f: SchedField | undefined, flt: SchedFilter, el: El, doc: Doc): 
 }
 
 // ------------------------------------------------------------ Tabelle berechnen
-export interface TRow { kind: 'data' | 'group' | 'footer' | 'total' | 'blank'; cells: any[]; text: string[]; ids: Id[] }
-export interface Table { title: string; fields: SchedField[]; heads: string[]; rows: TRow[]; count: number }
+export interface TRow { kind: 'data' | 'group' | 'footer' | 'total' | 'blank' | 'carry' | 'subtotal'; cells: any[]; text: string[]; ids: Id[] }
+export interface Table {
+  title: string; fields: SchedField[]; heads: string[]; rows: TRow[]; count: number;
+  /** Felder mit Summenbildung (ohne Anzahl) und Spalte für die Beschriftung von Summenzeilen (-1 = keine) */
+  sums: string[]; labelCol: number;
+}
+
+/** Summenzeile über Elemente: Anzahl, Summen der Summenfelder, Beschriftung in der ersten Textspalte (Fußzeile, Gesamtsumme, Übertrag) */
+export function sumCells(doc: Doc, t: Pick<Table, 'fields' | 'sums' | 'labelCol'>, els: El[], label: string): any[] {
+  const sums = new Set(t.sums);
+  return t.fields.map((f, i) => {
+    if (f.unit === 'count') return els.length;
+    if (sums.has(f.key)) { let s = 0; let any = false; for (const el of els) { const v = safeGet(f, el, doc); if (typeof v === 'number' && isFinite(v)) { s += v; any = true; } } return any ? s : ''; }
+    return i === t.labelCol ? label : '';
+  });
+}
+/** Spalten mit Summen (Summenfelder und Anzahl) – nur dann gibt es einen Übertrag */
+const sumCols = (t: Table) => t.fields.filter((f) => f.unit === 'count' || t.sums.includes(f.key)).length;
 
 export function buildTable(doc: Doc, view: View): Table {
   const d = schedDef(view);
@@ -219,11 +238,8 @@ export function buildTable(doc: Doc, view: View): Table {
   const rows: TRow[] = [];
   const text = (cells: any[]) => cells.map((v, i) => fmtField(shown[i], v));
   const labelCol = shown.findIndex((f) => f.unit !== 'count' && !sums.has(f.key));
-  const sumCells = (group: El[], label: string): any[] => shown.map((f, i) => {
-    if (f.unit === 'count') return group.length;
-    if (sums.has(f.key)) { let s = 0; let any = false; for (const el of group) { const v = safeGet(f, el, doc); if (typeof v === 'number' && isFinite(v)) { s += v; any = true; } } return any ? s : ''; }
-    return i === labelCol ? label : '';
-  });
+  const tsum = { fields: shown, sums: [...sums], labelCol };
+  const groupSum = (group: El[], label: string): any[] => sumCells(doc, tsum, group, label);
   const rowOf = (group: El[]): TRow => {
     const cells = shown.map((f) => {
       if (f.unit === 'count') return group.length;
@@ -251,14 +267,14 @@ export function buildTable(doc: Doc, view: View): Table {
       const g = els.slice(i, j); const gl = fmtField(sorts[0].f, v0) || '(ohne)';
       if (d.header) rows.push({ kind: 'group', cells: [gl], text: [gl], ids: g.map((e) => e.id) });
       emitRows(g);
-      if (d.footer) { const c = sumCells(g, `${gl}: ${g.length}`); rows.push({ kind: 'footer', cells: c, text: text(c), ids: g.map((e) => e.id) }); }
+      if (d.footer) { const c = groupSum(g, `${gl}: ${g.length}`); rows.push({ kind: 'footer', cells: c, text: text(c), ids: g.map((e) => e.id) }); }
       if (d.blank && j < els.length) rows.push({ kind: 'blank', cells: [], text: [], ids: [] });
       i = j;
     }
   } else emitRows(els);
-  if (d.totals && els.length) { const c = sumCells(els, `Gesamtsumme: ${els.length}`); rows.push({ kind: 'total', cells: c, text: text(c), ids: [] }); }
+  if (d.totals && els.length) { const c = groupSum(els, `Gesamtsumme: ${els.length}`); rows.push({ kind: 'total', cells: c, text: text(c), ids: [] }); }
   const heads = shown.map((f) => d.labels?.[f.key] || f.label);
-  return { title: view.name, fields: shown, heads, rows, count: els.length };
+  return { title: view.name, fields: shown, heads, rows, count: els.length, sums: tsum.sums, labelCol };
 }
 
 // ------------------------------------------------------------ Tabelle als Display-Liste (Plan, Druck, SVG)
@@ -284,55 +300,175 @@ function drawSketch(dl: DisplayList, sk: SketchCell['sketch'], x0: number, y0: n
   }
 }
 
-registerDLBuilder('schedule', (doc, view) => {
-  const sk = scheduleKind(view);
-  if (sk) return sk.dl(doc, view);
-  const t = buildTable(doc, view);
-  const dl = new DisplayList(1);
-  const fs = 2.5, pad = 1.5, rh0 = 6, hh = 7, th = 9, rhS = 15;
+// Masse der Tabelle (Papier-mm): Schrift, Rand, Zeile, Kopfzeile, Titel, Zeile mit Skizze
+const FS = 2.5, PAD = 1.5, RH = 6, HH = 7, TH = 9, RHS = 15;
+const rowH = (r: TRow) => (r.kind === 'data' && r.cells.some(isSketch) ? RHS : RH);
+
+/** Tabelle (Titel, Kopfzeile, Zeilen) ab Ursprung oben links zeichnen; liefert die Höhe */
+function drawTable(dl: DisplayList, t: Table, cw: number[], rows: TRow[], title: string): number {
   const n = t.fields.length;
-  if (!n) { dl.text({ x: 0, y: 0 }, view.name + ' (keine Felder)', { size: 3.5, bold: true }); return dl; }
-  const sketchCol = t.fields.map((_f, i) => t.rows.some((r) => isSketch(r.cells[i])));
-  const cw = t.fields.map((_f, i) => Math.max(sketchCol[i] ? 50 : 14, textWidth(t.heads[i], fs * 1.08) + 2 * pad,
-    ...t.rows.filter((r) => (r.kind === 'data' && !sketchCol[i]) || r.kind === 'footer' || r.kind === 'total').map((r) => textWidth(r.text[i] ?? '', fs * (r.kind === 'data' ? 1 : 1.08)) + 2 * pad)));
   const W = cw.reduce((s, x) => s + x, 0);
   const xs: number[] = [0]; for (const w of cw) xs.push(xs[xs.length - 1] + w);
   const thin = { w: 1 }, bold = { w: 3 };
   let y = 0;
-  dl.text({ x: W / 2, y: -th / 2 }, t.title, { size: 3.5, bold: true, ha: 'center', va: 'middle' });
-  y -= th;
+  dl.text({ x: W / 2, y: -TH / 2 }, title, { size: 3.5, bold: true, ha: 'center', va: 'middle' });
+  y -= TH;
   const top = y;
   // Kopfzeile
-  for (let i = 0; i < n; i++) dl.text({ x: (xs[i] + xs[i + 1]) / 2, y: y - hh / 2 }, t.heads[i], { size: fs, bold: true, ha: 'center', va: 'middle' });
-  y -= hh;
+  for (let i = 0; i < n; i++) dl.text({ x: (xs[i] + xs[i + 1]) / 2, y: y - HH / 2 }, t.heads[i], { size: FS, bold: true, ha: 'center', va: 'middle' });
+  y -= HH;
   dl.line({ x: 0, y }, { x: W, y }, bold);
-  for (const r of t.rows) {
-    const rh = r.kind === 'data' && r.cells.some(isSketch) ? rhS : rh0;
+  rows.forEach((r, ri) => {
+    const rh = rowH(r);
     const yc = y - rh / 2;
-    if (r.kind === 'group') dl.text({ x: pad, y: yc }, r.text[0] ?? '', { size: fs, bold: true, va: 'middle' });
+    if (r.kind === 'group') dl.text({ x: PAD, y: yc }, r.text[0] ?? '', { size: FS, bold: true, va: 'middle' });
     else if (r.kind !== 'blank') {
       for (let i = 0; i < n; i++) {
         const cv = r.cells[i];
         if (isSketch(cv)) {
           dl.text({ x: xs[i] + 1, y: y - 0.8 }, cv.text.split(':')[0], { size: 1.6, va: 'top', color: '#606060' });
-          drawSketch(dl, cv.sketch, xs[i] + pad, y - rh, xs[i + 1] - pad, y - 2);
+          drawSketch(dl, cv.sketch, xs[i] + PAD, y - rh, xs[i + 1] - PAD, y - 2);
           continue;
         }
         const s = r.text[i] ?? ''; if (!s) continue;
         const num = typeof r.cells[i] === 'number';
         const label = r.kind !== 'data' && !num;
-        dl.text({ x: num ? xs[i + 1] - pad : xs[i] + pad, y: yc }, s, { size: fs, va: 'middle', ha: num ? 'right' : 'left', bold: r.kind === 'total', italic: r.kind === 'footer' && label });
+        const sumRow = r.kind === 'footer' || r.kind === 'carry' || r.kind === 'subtotal';
+        dl.text({ x: num ? xs[i + 1] - PAD : xs[i] + PAD, y: yc }, s, { size: FS, va: 'middle', ha: num ? 'right' : 'left', bold: r.kind === 'total', italic: sumRow && label });
       }
       for (let i = 1; i < n; i++) dl.line({ x: xs[i], y }, { x: xs[i], y: y - rh }, thin, { ns: true });
     }
     y -= rh;
-    dl.line({ x: 0, y }, { x: W, y }, r.kind === 'total' || r.kind === 'footer' ? { w: 2 } : thin, { ns: true });
-  }
-  for (let i = 1; i < n; i++) dl.line({ x: xs[i], y: top }, { x: xs[i], y: top - hh }, thin, { ns: true });
+    // Summenzeilen kräftig abgesetzt (Übertrag am Anfang eines Abschnitts: Linie darunter)
+    const strong = r.kind === 'total' || r.kind === 'footer' || r.kind === 'subtotal' || (r.kind === 'carry' && ri === 0);
+    dl.line({ x: 0, y }, { x: W, y }, strong ? { w: 2 } : thin, { ns: true });
+  });
+  for (let i = 1; i < n; i++) dl.line({ x: xs[i], y: top }, { x: xs[i], y: top - HH }, thin, { ns: true });
   dl.poly(boxCorners({ min: { x: 0, y }, max: { x: W, y: top } }), bold, true);
   dl.poly(boxCorners({ min: { x: 0, y }, max: { x: W, y: 0 } }), bold, true);
-  return dl;
+  return -y;
+}
+
+// ------------------------------------------------------------ Umbruch langer Listen (Abschnitte, Übertrag)
+/** Umbruch-Einstellung der Liste (View.data.split) oder null */
+export function schedSplit(v: View): SchedSplit | null {
+  const s = v.data?.split;
+  return s && typeof s.maxH === 'number' && s.maxH > 0 ? s : null;
+}
+
+/** Zeilen je Abschnitt einer allgemeinen Bauteilliste: Übertrag am Anfang/Ende, optional Zwischentotal, Gesamtsumme im letzten */
+export function tableParts(doc: Doc, view: View, t: Table = buildTable(doc, view), sp: SchedSplit | null = schedSplit(view)): TRow[][] {
+  let parts: TRow[][] = [t.rows];
+  if (sp) {
+    const carry = sumCols(t) > 0;
+    const rc = carry ? RH : 0, sub = sp.subtotal && carry ? RH : 0;
+    const nxt = (i: number) => t.rows[i + 1]?.kind;
+    const keep = t.rows.map((r, i) => r.kind === 'group' || nxt(i) === 'footer' || nxt(i) === 'total' || nxt(i) === 'blank');
+    const segs = paginate(t.rows.map(rowH), keep, sp.maxH, TH + HH + sub, TH + HH + sub, rc, rc);
+    if (segs.length > 1) {
+      const els = (rows: TRow[]) => rows.filter((r) => r.kind === 'data').flatMap((r) => r.ids).map((id) => doc.get(id)).filter((e): e is El => !!e);
+      const row = (kind: 'carry' | 'subtotal', list: El[], label: string): TRow => { const c = sumCells(doc, t, list, label); return { kind, cells: c, text: c.map((v, i) => fmtField(t.fields[i], v)), ids: [] }; };
+      let run: El[] = [];
+      parts = segs.map(([a, b], k) => {
+        const rows = t.rows.slice(a, b);
+        while (rows[0]?.kind === 'blank') rows.shift();
+        while (rows.length && rows[rows.length - 1].kind === 'blank') rows.pop();
+        const out: TRow[] = [];
+        if (k > 0 && carry) out.push(row('carry', run, 'Übertrag'));
+        const mine = els(rows); run = run.concat(mine);
+        const last = k === segs.length - 1;
+        let tail: TRow[] = [];
+        if (last) { const i = rows.findIndex((r) => r.kind === 'total'); if (i >= 0) tail = rows.splice(i); }
+        out.push(...rows);
+        if (sub) out.push(row('subtotal', mine, 'Zwischentotal'));
+        if (!last && carry) out.push(row('carry', run, 'Übertrag'));
+        return out.concat(tail);
+      });
+    }
+  }
+  return parts;
+}
+
+/** Allgemeine Bauteilliste in Abschnitte (ohne Umbruch: ein Abschnitt, wie bisher) */
+function tableSegments(doc: Doc, view: View, sp: SchedSplit | null): SchedSeg[] {
+  const t = buildTable(doc, view);
+  if (!t.fields.length) { const dl = new DisplayList(1); dl.text({ x: 0, y: 0 }, view.name + ' (keine Felder)', { size: 3.5, bold: true }); return [{ dl, w: 60, h: 5 }]; }
+  const parts = tableParts(doc, view, t, sp);
+  const all = parts.flat();
+  const sketchCol = t.fields.map((_f, i) => all.some((r) => isSketch(r.cells[i])));
+  const cw = t.fields.map((_f, i) => Math.max(sketchCol[i] ? 50 : 14, textWidth(t.heads[i], FS * 1.08) + 2 * PAD,
+    ...all.filter((r) => (r.kind === 'data' && !sketchCol[i]) || (r.kind !== 'data' && r.kind !== 'group' && r.kind !== 'blank'))
+      .map((r) => textWidth(r.text[i] ?? '', FS * (r.kind === 'data' ? 1 : 1.08)) + 2 * PAD)));
+  const W = cw.reduce((s, x) => s + x, 0);
+  return parts.map((rows, k) => {
+    const dl = new DisplayList(1);
+    const h = drawTable(dl, t, cw, rows, k ? `${t.title} (Fortsetzung)` : t.title);
+    return { dl, w: W, h };
+  });
+}
+
+/** Abschnitte der Liste (zwischengespeichert bis zur nächsten Änderung) */
+export function schedSegments(doc: Doc, view: View): SchedSeg[] {
+  return cached(doc, 'schedLayout', view.id, () => {
+    const sk = scheduleKind(view); const sp = schedSplit(view);
+    if (sk) {
+      if (sp && sk.layout) return sk.layout(doc, view, sp);
+      const dl = sk.dl(doc, view); const b = dl.bbox();
+      return [{ dl, w: b.max.x - b.min.x, h: -b.min.y }];
+    }
+    return tableSegments(doc, view, sp);
+  });
+}
+/** Anzahl Abschnitte einer (umbrochenen) Liste */
+export const schedSegCount = (doc: Doc, view: View): number => schedSegments(doc, view).length;
+
+/** Abschnittsbereich [von, bis): ohne Angabe alle; segFrom ohne segCount = «Abschnitte nebeneinander» (cols) */
+export function segRange(n: number, sp: SchedSplit | null, o: DLOpts = {}): [number, number] {
+  const from = Math.max(0, Math.floor(o.segFrom ?? 0));
+  const cols = Math.max(1, Math.floor(sp?.cols ?? 1));
+  const cnt = o.segCount === 'rest' || (o.segCount === undefined && o.segFrom === undefined) ? n - from : Math.max(1, Math.floor(o.segCount ?? cols));
+  return [from, Math.min(n, from + cnt)];
+}
+
+/** Abschnitte im Raster anordnen (je Zeile «cols» Abschnitte, Abstand gap) – jeder Abschnitt mit eigenem Ursprung oben links */
+function arrangeSegments(segs: SchedSeg[], sp: SchedSplit | null, o: DLOpts, name: string): DisplayList {
+  const out = new DisplayList(1);
+  const [a, b] = segRange(segs.length, sp, o);
+  if (a >= b) {
+    out.text({ x: 0, y: -3.5 }, `${name}: Abschnitt ${a + 1} nicht vorhanden (${segs.length} Abschnitt${segs.length === 1 ? '' : 'e'})`, { size: 3.5, bold: true, va: 'middle', color: '#c03030' });
+    return out;
+  }
+  const cols = Math.max(1, Math.floor(sp?.cols ?? 1)), gap = sp?.gap ?? 10;
+  const W = Math.max(...segs.map((s) => s.w)), H = sp ? sp.maxH : Math.max(...segs.map((s) => s.h));
+  for (let i = a; i < b; i++) {
+    const c = (i - a) % cols, r = Math.floor((i - a) / cols);
+    out.append(segs[i].dl, c || r ? translation(c * (W + gap), -r * (H + gap)) : undefined);
+  }
+  return out;
+}
+
+registerDLBuilder('schedule', (doc, view, o = {}) => {
+  const sk = scheduleKind(view); const sp = schedSplit(view);
+  if (sk && !(sp && sk.layout)) return sk.dl(doc, view, o);
+  return arrangeSegments(schedSegments(doc, view), sp, o, view.name);
 });
+
+/** Eigenschaften «Umbruch» der Listenansicht (Abschnittshöhe, Abschnitte nebeneinander, Abstand, Zwischentotal) */
+function splitProps(doc: Doc): PropDef[] {
+  const g = 'Umbruch';
+  const sp = (e: El): SchedSplit => ({ maxH: 0, ...(e.data?.split ?? {}) });
+  const set = (e: El, patch: Partial<SchedSplit>) => {
+    const n = { ...sp(e), ...patch };
+    return { data: { ...(e.data ?? {}), split: n.maxH > 0 ? n : undefined } };
+  };
+  return [
+    { key: 'splitH', label: 'Max. Tabellenhöhe (mm, 0 = kein Umbruch)', group: g, type: 'number', get: (e) => sp(e).maxH || 0, set: (e, v) => (v >= 0 ? set(e, { maxH: v > 0 ? Math.max(40, v) : 0 }) : undefined) },
+    { key: 'splitCols', label: 'Abschnitte nebeneinander', group: g, type: 'int', get: (e) => sp(e).cols ?? 1, set: (e, v) => set(e, { cols: Math.max(1, Math.min(12, Math.round(v))) }) },
+    { key: 'splitGap', label: 'Abstand (mm)', group: g, type: 'number', get: (e) => sp(e).gap ?? 10, set: (e, v) => set(e, { gap: Math.max(0, v) }) },
+    { key: 'splitSub', label: 'Zwischentotal je Abschnitt', group: g, type: 'bool', get: (e) => !!sp(e).subtotal, set: (e, v) => set(e, { subtotal: !!v || undefined }) },
+    { key: 'splitN', label: 'Abschnitte', group: g, type: 'readonly', get: (e) => String(schedSegCount(doc, e as View)) },
+  ];
+}
 
 // ------------------------------------------------------------ CSV-Export
 export function scheduleCsv(doc: Doc, view: View): string {
@@ -510,13 +646,14 @@ export function editSchedule(v: View, tab: Tab = 'fields'): void {
 extendViewProps('schedule', (v, doc, base) => {
   const g = GROUPS;
   const sk = scheduleKind(v as View);
-  if (sk) return [...base.filter((p) => p.key !== 'titleOnSheet'), { key: 'schedCat', label: 'Liste', group: g.identity, type: 'readonly', get: () => sk.label }, ...(sk.props?.(v as View, doc) ?? [])];
+  if (sk) return [...base.filter((p) => p.key !== 'titleOnSheet'), { key: 'schedCat', label: 'Liste', group: g.identity, type: 'readonly', get: () => sk.label }, ...(sk.props?.(v as View, doc) ?? []), ...(sk.layout ? splitProps(doc) : [])];
   const btn = (key: string, label: string, tab: Tab): PropDef => ({ key, label, group: g.other, type: 'button', get: () => 'Bearbeiten…', action: (e) => editSchedule(e as View, tab) });
   return [
     ...base.filter((p) => p.key !== 'titleOnSheet'),
     { key: 'schedCat', label: 'Kategorie', group: g.identity, type: 'readonly', get: (e) => catDef(e.data?.cat)?.plural ?? e.data?.cat ?? '' },
     { key: 'schedCount', label: 'Anzahl Elemente', group: g.identity, type: 'readonly', get: (e) => String(buildTable(doc, e as View).count) },
     btn('fields', 'Felder', 'fields'), btn('filter', 'Filter', 'filter'), btn('sort', 'Sortierung/Gruppierung', 'sort'), btn('format', 'Formatierung', 'format'),
+    ...splitProps(doc),
   ];
 });
 

@@ -9,7 +9,7 @@ import {
   lineLine, apply, applyVec, Mat2, projectT, sideDist, clamp, bboxOf, eq,
 } from '../../core/geom';
 import { registerCategory, catDef, PropDef, GROUPS, Grip } from '../../core/registry';
-import { View, isPlanLike, makeProjector, Level } from '../../core/view';
+import { View, isPlanLike, makeProjector, Level, annoViewId, annoIn } from '../../core/view';
 import { DisplayList, textWidth } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { fmtLen, fmtAngle, LengthUnit } from '../../core/units';
@@ -394,7 +394,7 @@ function trRef(r: DimRef, m: Mat2): DimRef {
 }
 
 function dimGrips(el: Dim, doc: Doc, view: View): Grip[] {
-  if (el.viewId !== view.id) return [];
+  if (!annoIn(doc, el, view)) return [];
   const st = dimStyle(doc, el); const s = view.scale;
   if (el.kind === 'linear') {
     const lay = linearLayout(doc, view, el); if (!lay) return [];
@@ -613,7 +613,7 @@ export function collectCands(e: ToolEvent, withPoints = true): Cand[] {
       }
     }
     if (!ref.id && sn.kind === 'center') {
-      for (const l of doc.all('line')) if (l.arc && (l.viewId === view.id || (!l.viewId && plan)) && eq(l.arc.c, sn.p, 0.5)) { ref = { id: l.id, sub: 'c', p: sn.p }; break; }
+      for (const l of doc.all('line')) if (l.arc && (annoIn(doc, l, view) || (!l.viewId && plan)) && eq(l.arc.c, sn.p, 0.5)) { ref = { id: l.id, sub: 'c', p: sn.p }; break; }
     }
     out.push({ ref, g: { k: 'pt', p: sn.p }, d: dist(sn.p, raw) - tol * 0.3, hl: { p: sn.p } });
   }
@@ -772,7 +772,7 @@ export class DimTool extends Tool {
   private temp(p: V2, view: View): Dim | null {
     const dir = this.currentDir(p, view); if (!dir) return null;
     const pr = this.placement!.proto;
-    return { id: '__dim', cat: 'dimension', viewId: view.id, typeId: pr.typeId, kind: 'linear', aligned: this.aligned, refs: this.refs, dir, line: p, prefix: pr.prefix, suffix: pr.suffix } as Dim;
+    return { id: '__dim', cat: 'dimension', viewId: annoViewId(app.doc, view), typeId: pr.typeId, kind: 'linear', aligned: this.aligned, refs: this.refs, dir, line: p, prefix: pr.prefix, suffix: pr.suffix } as Dim;
   }
 
   private place(p: V2, view: View): void {
@@ -832,7 +832,7 @@ export class AngularDimTool extends Tool {
     this.refs = [];
   }
   private temp(p: V2, view: View): Dim {
-    return { id: '__dim', cat: 'dimension', viewId: view.id, typeId: this.placement!.proto.typeId, kind: 'angular', refs: this.refs, pt: p } as Dim;
+    return { id: '__dim', cat: 'dimension', viewId: annoViewId(app.doc, view), typeId: this.placement!.proto.typeId, kind: 'angular', refs: this.refs, pt: p } as Dim;
   }
   escape(): boolean { if (this.refs.length) { this.refs = []; return true; } return false; }
   preview(dl: DisplayList, vp: any): void {
@@ -881,7 +881,7 @@ export class ArcDimTool extends Tool {
     this.ref = null;
   }
   private temp(p: V2, view: View): Dim {
-    return { id: '__dim', cat: 'dimension', viewId: view.id, typeId: this.placement!.proto.typeId, kind: this.kind, refs: [this.ref!], pt: p } as Dim;
+    return { id: '__dim', cat: 'dimension', viewId: annoViewId(app.doc, view), typeId: this.placement!.proto.typeId, kind: this.kind, refs: [this.ref!], pt: p } as Dim;
   }
   escape(): boolean { if (this.ref) { this.ref = null; return true; } return false; }
   preview(dl: DisplayList, vp: any): void {

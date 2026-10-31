@@ -6,7 +6,7 @@ import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, sub, mul, apply, applyVec, isMirror, fromAngle, pointInPoly } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
-import { View, isPlanLike, isSectionLike, makeProjector, levelElev, projectInfo, DEFAULT_RANGE } from '../../core/view';
+import { View, isPlanLike, isSectionLike, makeProjector, levelElev, projectInfo, DEFAULT_RANGE, annoViewId } from '../../core/view';
 import { DisplayList, textWidth } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
@@ -316,7 +316,7 @@ export class SpotTool extends Tool {
   private cand(): SlabHit | null { return this.cands.length ? this.cands[this.cyc % this.cands.length] : null; }
   private make(p: V2, off: V2 | undefined, view: View): Spot {
     const pr = this.placement!.proto;
-    const sp: Spot = { id: '__spot', cat: 'spot', viewId: view.id, typeId: pr.typeId, kind: this.kind, p } as Spot;
+    const sp: Spot = { id: '__spot', cat: 'spot', viewId: annoViewId(app.doc, view), typeId: pr.typeId, kind: this.kind, p } as Spot;
     if (this.leader && off) { sp.leader = true; sp.off = off; }
     if (pr.prefix !== undefined) sp.prefix = pr.prefix;
     if (pr.zOff) sp.zOff = pr.zOff;

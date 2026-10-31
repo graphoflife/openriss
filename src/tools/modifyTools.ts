@@ -14,7 +14,7 @@ import { PREVIEW, PREVIEW_THIN, listen } from './drawTool';
 import { fmtLen, fmtNum, parseNum } from '../core/units';
 import { Wall, wallInfo, keepHostedAbsolute } from '../elements/wall';
 import { hostedBy } from '../core/cache';
-import { isPlanLike } from '../core/view';
+import { isPlanLike, annoViewId } from '../core/view';
 
 const GHOST = '#1e6fd9';
 
@@ -541,7 +541,7 @@ export function pasteAt(d: V2, view = app.activeView()!): void {
       c.id = idMap.get(src.id)!;
       if (c.hostId) c.hostId = idMap.get(c.hostId) ?? c.hostId;
       if (c.refId && idMap.has(c.refId)) c.refId = idMap.get(c.refId);
-      if (c.viewId) c.viewId = view.id;
+      if (c.viewId) c.viewId = annoViewId(app.doc, view);
       if (c.levelId && isPlanLike(view)) c.levelId = shiftLevel(c.levelId) as Id;
       if (c.topLevelId && isPlanLike(view)) c.topLevelId = shiftLevel(c.topLevelId) as Id;
       if (c.cat === 'door' || c.cat === 'window') c.mark = undefined;

@@ -4,8 +4,8 @@ import { lineStyleOfPrim } from '../../elements/datums';
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
-import { registerCategory, registerCommand, registerContextPanel, onHook, GROUPS, dlBuilder } from '../../core/registry';
-import { View, cropBox, VIEW_KIND_LABEL } from '../../core/view';
+import { registerCategory, registerCommand, registerContextPanel, onHook, GROUPS, dlBuilder, DLOpts } from '../../core/registry';
+import { View, cropBox, VIEW_KIND_LABEL, detachView } from '../../core/view';
 import { DisplayList, Prim, transformPrim, textWidth } from '../../render/displayList';
 import { V2, BBox, Mat2, apply, add, sub, boxValid, boxCorners } from '../../core/geom';
 import { buildViewDL } from '../../views/viewBuilder';
@@ -15,6 +15,7 @@ import { modal, toast } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
 import { SCALES } from '../../ui/viewControlBar';
 import { isSheet, contentBox } from './common';
+import { schedSplit, schedSegCount } from './schedules';
 
 export interface Viewport extends El {
   cat: 'viewport';
@@ -25,7 +26,13 @@ export interface Viewport extends El {
   detail: string;    // Detailnummer
   showTitle?: boolean;
   titleOff?: V2;     // Verschiebung des Titels (Plan-mm)
+  /** umbrochene Bauteilliste: erster Abschnitt (0-basiert) und Anzahl ('rest' = alle folgenden; fehlt = «Abschnitte nebeneinander») */
+  segFrom?: number;
+  segCount?: number | 'rest';
 }
+
+/** Aufbau-Optionen eines Ansichtsfensters (Abschnitte einer umbrochenen Liste) */
+export const vpOpts = (vp: Viewport, v: View): DLOpts => (v.kind === 'schedule' ? { segFrom: vp.segFrom ?? 0, segCount: vp.segCount } : {});
 
 /** Ansichten, die mehrfach platziert werden dürfen (wie Revit: Legenden, Bauteillisten) */
 export const multiPlace = (v: View) => v.kind === 'legend' || v.kind === 'schedule';
@@ -47,8 +54,11 @@ export function placementError(doc: Doc, sheet: View, v: View): string | null {
 
 // ------------------------------------------------------------ Geometrie
 // Display-Listen der platzierten Ansichten zwischenspeichern; Änderungen nur an Ansichtsfenstern
-// (z.B. Verschieben auf dem Plan) erfordern keinen Neuaufbau der Ansichten.
-const innerCache = new Map<Id, DisplayList>();
+// (z.B. Verschieben auf dem Plan) erfordern keinen Neuaufbau der Ansichten. Platzieren/Entfernen, Detail- und
+// Plannummern ändern die Verweise in den Ansichten (Schnittköpfe, Ausschnitte, Anschlusslinien) → neu aufbauen.
+const innerCache = new Map<string, DisplayList>();
+const refSig = new Map<Id, string>();
+const sigOf = (e: El) => (e.cat === 'viewport' ? `${e.viewId}|${e.refId}|${e.detail}` : `${e.sheetNo ?? ''}`);
 app.doc.on((cs, origin) => {
   const ids = [...cs.added, ...cs.modified, ...cs.removed];
   const onSheet = (id: Id) => {
@@ -56,22 +66,32 @@ app.doc.on((cs, origin) => {
     if (e.cat === 'viewport' || (e.cat === 'view' && e.kind === 'sheet')) return true;
     return !!e.viewId && app.doc.get<View>(e.viewId)?.kind === 'sheet';
   };
-  if (origin !== 'load' && ids.length && ids.every(onSheet)) return;
+  if (origin === 'load') refSig.clear();
+  let refs = false;
+  for (const id of cs.removed) if (refSig.delete(id)) refs = true;
+  for (const id of [...cs.added, ...cs.modified]) {
+    const e = app.doc.get(id);
+    if (!e || !(e.cat === 'viewport' || (e.cat === 'view' && e.kind === 'sheet'))) continue;
+    const sg = sigOf(e); if (refSig.get(id) !== sg) { refSig.set(id, sg); refs = true; }
+  }
+  if (origin !== 'load' && !refs && ids.length && ids.every(onSheet)) return;
   innerCache.clear();
 });
-function innerDL(doc: Doc, v: View): DisplayList {
-  if (doc !== app.doc) return buildViewDL(doc, v);
-  let dl = innerCache.get(v.id);
-  if (!dl) { dl = buildViewDL(doc, v); innerCache.set(v.id, dl); }
+/** Display-Liste einer platzierten Ansicht (zwischengespeichert je Ansicht und Aufbau-Optionen) */
+export function innerDL(doc: Doc, v: View, o: DLOpts = {}): DisplayList {
+  if (doc !== app.doc) return buildViewDL(doc, v, o);
+  const key = v.id + (Object.keys(o).length ? '|' + JSON.stringify(o) : '');
+  let dl = innerCache.get(key);
+  if (!dl) { dl = buildViewDL(doc, v, o); innerCache.set(key, dl); }
   return dl;
 }
 const viewScale = (v: View) => (v.kind === 'schedule' ? 1 : v.scale || 100);
 
-/** Ausdehnung der Ansicht (Ansichts-mm): Zuschneidebereich oder Umfang der Display-Liste */
-export function viewExtent(doc: Doc, v: View): BBox {
+/** Ausdehnung der Ansicht (Ansichts-mm): Zuschneidebereich oder Umfang der Display-Liste (Liste: gewählte Abschnitte) */
+export function viewExtent(doc: Doc, v: View, o: DLOpts = {}): BBox {
   const c = cropBox(v);
   if (c) return c;
-  const b = contentBox(innerDL(doc, v));
+  const b = contentBox(innerDL(doc, v, o));
   return boxValid(b) ? b : { min: { x: -1000, y: -1000 }, max: { x: 1000, y: 1000 } };
 }
 
@@ -81,7 +101,7 @@ export function vpXf(vp: Viewport, v: View): Mat2 {
 }
 /** Umriss des Ansichtsfensters auf dem Plan */
 export function vpBox(doc: Doc, vp: Viewport, v: View): BBox {
-  const b = viewExtent(doc, v); const m = vpXf(vp, v);
+  const b = viewExtent(doc, v, vpOpts(vp, v)); const m = vpXf(vp, v);
   return { min: apply(m, b.min), max: apply(m, b.max) };
 }
 
@@ -96,7 +116,7 @@ function drawViewport(dl: DisplayList, el: El, doc: Doc): void {
   const vp = el as Viewport; const v = doc.get<View>(vp.refId);
   if (!v) return;
   const xf = vpXf(vp, v);
-  const src = innerDL(doc, v);
+  const src = innerDL(doc, v, vpOpts(vp, v));
   const out = new DisplayList(1);
   for (const it of src.items) {
     if (it.sel || it.inv) continue;
@@ -140,7 +160,7 @@ registerCategory({
     const v = doc.get<View>(el.refId);
     const copy = { ...el, detail: nextDetail(doc, el.viewId ?? '') } as Viewport;
     if (!v || multiPlace(v)) return copy;
-    const nv = JSON.parse(JSON.stringify(v)) as View;
+    const nv = detachView(JSON.parse(JSON.stringify(v)) as View, v);
     nv.id = newId('vw');
     const names = new Set(doc.all<View>('view').map((x) => x.name));
     let i = 1; do { nv.name = `${v.name} - Kopie ${i++}`; } while (names.has(nv.name));
@@ -174,6 +194,17 @@ registerCategory({
       { key: 'titleOnSheet', label: 'Titel auf Plan', group: g.identity, type: 'text', get: () => v?.titleOnSheet ?? '', set: (_e, x) => { setView({ titleOnSheet: x }); } },
       { key: 'showTitle', label: 'Titel anzeigen', group: g.graphics, type: 'bool', get: (e) => e.showTitle !== false, set: (_e, x) => ({ showTitle: !!x }) },
     ];
+    // umbrochene Liste: welche Abschnitte dieses Ansichtsfenster zeigt (Fortsetzung auf weiteren Plänen)
+    const sp = v && v.kind === 'schedule' ? schedSplit(v) : null;
+    if (v && sp) {
+      const n = schedSegCount(doc, v);
+      const nums = Array.from({ length: n }, (_x, i) => [String(i), String(i + 1)] as [string, string]);
+      p.push({ key: 'segFrom', label: 'Ab Abschnitt', group: g.extents, type: 'select', options: nums, get: (e) => String(e.segFrom ?? 0), set: (_e, x) => ({ segFrom: parseInt(x, 10) || undefined }) });
+      p.push({ key: 'segCount', label: 'Anzahl Abschnitte', group: g.extents, type: 'select',
+        options: [['', `Standard (${Math.max(1, sp.cols ?? 1)} nebeneinander)`], ['rest', 'alle folgenden'], ...nums.map(([, l]) => [l, l] as [string, string])],
+        get: (e) => (e.segCount === undefined ? '' : String(e.segCount)), set: (_e, x) => ({ segCount: x === 'rest' ? 'rest' : parseInt(x, 10) || undefined }) });
+      p.push({ key: 'segTotal', label: 'Abschnitte der Liste', group: g.extents, type: 'readonly', get: () => String(n) });
+    }
     if (v && v.kind !== 'schedule' && v.kind !== '3d') {
       p.push({ key: 'scale', label: 'Ansichtsmaßstab', group: g.graphics, type: 'select', options: SCALES.map((s) => [String(s), '1 : ' + s] as [string, string]), get: () => String(v.scale), set: (_e, x) => { setView({ scale: parseInt(x, 10) }); } });
       p.push({ key: 'vdetail', label: 'Detaillierungsgrad', group: g.graphics, type: 'select', options: [['coarse', 'Grob'], ['medium', 'Mittel'], ['fine', 'Fein']], get: () => v.detail, set: (_e, x) => { setView({ detail: x }); } });
@@ -195,7 +226,7 @@ export function placeView(sheet: View, v: View, p: V2): Id | null {
   const doc = app.doc;
   const err = placementError(doc, sheet, v);
   if (err) { alert(err); return null; }
-  const b = viewExtent(doc, v);
+  const b = viewExtent(doc, v, v.kind === 'schedule' ? { segFrom: 0 } : {});
   const vp: Viewport = {
     id: newId('vp'), cat: 'viewport', viewId: sheet.id, refId: v.id, center: { ...p },
     anchor: { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2 }, detail: nextDetail(doc, sheet.id),
@@ -225,7 +256,7 @@ class PlaceViewTool extends Tool {
   preview(dl: DisplayList) {
     const v = app.doc.get<View>(this.viewIdToPlace);
     if (!v || !this.cur) return;
-    const b = viewExtent(app.doc, v); const k = 1 / viewScale(v);
+    const b = viewExtent(app.doc, v, v.kind === 'schedule' ? { segFrom: 0 } : {}); const k = 1 / viewScale(v);
     const w = (b.max.x - b.min.x) * k, hh = (b.max.y - b.min.y) * k;
     const c = this.cur;
     const box = v.kind === 'schedule' ? { min: { x: c.x, y: c.y - hh }, max: { x: c.x + w, y: c.y } } : { min: { x: c.x - w / 2, y: c.y - hh / 2 }, max: { x: c.x + w / 2, y: c.y + hh / 2 } };
