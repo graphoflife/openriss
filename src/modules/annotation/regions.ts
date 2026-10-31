@@ -11,7 +11,7 @@ import type { Pen, Fill } from '../../render/styles';
 import { fmtArea } from '../../core/units';
 import { SketchTool, loopsToSegs } from '../../tools/sketchTool';
 import type { OptionItem } from '../../tools/tool';
-import { LINE_STYLES, lineStyleOptions } from '../../elements/datums';
+import { linePen, lineStyleOptions } from '../../elements/datums';
 import { startTool } from '../../ui/commands';
 import { ANNO_KINDS, myPlacement, ensureTypes, solid } from './common';
 
@@ -45,7 +45,7 @@ function drawRegion(dl: DisplayList, el: Region, doc: Doc): void {
   const fill: Fill = pattern === 'solid' ? solid(patColor) : { color: bg || 'transparent', pattern: pattern || undefined, patColor };
   dl.fill(el.loops, fill, undefined, { sub: 'region' });
   const style = el.lineStyle ?? (t.masking ? 'invisible' : 'thin');
-  const pen: Pen = LINE_STYLES[style]?.pen ?? { w: 1 };
+  const pen: Pen = linePen(doc, style);
   const invisible = style === 'invisible';
   for (const r of el.loops) for (let i = 0; i < r.length; i++) dl.line(r[i], r[(i + 1) % r.length], pen, { sub: 'edge', sel: invisible || undefined });
 }
@@ -124,7 +124,7 @@ export function startRegionTool(): void {
   let viewId: Id = '';
   const pl = myPlacement('filledRegion', 'region', 'rgt_beton', { lineStyle: 'thin' });
   const extra = (): OptionItem[] => [
-    { kind: 'select', key: 'ls', label: 'Linienstil', value: pl.proto.lineStyle ?? 'thin', options: lineStyleOptions(), onChange: (v) => { pl.proto.lineStyle = v; app.emit('tool'); } },
+    { kind: 'select', key: 'ls', label: 'Linienstil', value: pl.proto.lineStyle ?? 'thin', options: lineStyleOptions(app.doc), onChange: (v) => { pl.proto.lineStyle = v; app.emit('tool'); } },
   ];
   const t = new SketchTool('Füllbereich', (loops) => {
     if (!viewId) return;

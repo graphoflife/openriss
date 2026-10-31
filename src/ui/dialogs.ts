@@ -6,7 +6,8 @@ import type { El, Id } from '../core/doc';
 import { newId } from '../core/doc';
 import { typesOf, TypeEl, Material, materialOptions, View, projectInfo, ProjectInfo, ViewRange, DEFAULT_RANGE } from '../core/view';
 import { fmtLen, parseLen, unitSettings, LengthUnit, fmtNum, parseNum } from '../core/units';
-import { OBJECT_STYLES, patternOptions, PEN_MM } from '../render/styles';
+import { OBJECT_STYLES, patternOptions, PEN_MM, DASHES, DASH_LABELS, DashName } from '../render/styles';
+import { lineStyles, lineStyleTemplate, LineStyleType } from '../elements/datums';
 import { h } from './shell';
 import type { WallType, WallLayer } from '../elements/wall';
 import { typeThickness } from '../elements/wall';
@@ -379,6 +380,65 @@ export function objectStylesDialog(): void {
     { label: 'OK', primary: true, onClick: () => { app.doc.transaction('Objektstile', () => app.doc.update('project', { objStyles: ov })); app.refreshViews(); } },
     { label: 'Abbrechen', onClick: () => {} },
   ], 560);
+}
+
+// ------------------------------------------------------------ Linienstile (Projekttypen)
+export function lineStylesDialog(): void {
+  const doc = app.doc;
+  const tpl = new Set(lineStyleTemplate().map((t) => t.id));
+  type Row = { id: Id; name: string; pen: number; color: string; dash: DashName; isNew?: boolean; del?: boolean };
+  const rows: Row[] = lineStyles(doc).map((t) => ({ id: t.id, name: t.name, pen: t.pen, color: t.color ?? '#000000', dash: t.dash ?? 'solid' }));
+  // verwendete Stile (Detail-/Modelllinien, Bereichsränder)
+  const used = new Map<string, number>();
+  for (const l of doc.all('line')) used.set(l.style, (used.get(l.style) ?? 0) + 1);
+  for (const r of doc.all('region')) if (r.lineStyle) used.set(r.lineStyle, (used.get(r.lineStyle) ?? 0) + 1);
+  const uses = (id: Id) => (used.get(id) ?? 0) + (used.get(id.replace(/^ls_/, '')) ?? 0);
+  const body = h('div', { style: 'max-height:62vh;overflow:auto;min-width:620px' });
+  const render = () => {
+    body.innerHTML = '';
+    const t = h('table', { class: 'grid' });
+    t.append(h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Stift'), h('th', {}, 'Farbe'), h('th', {}, 'Strichart'), h('th', {}, 'Vorschau'), h('th', {}, 'Verwendet'), h('th', {}, '')));
+    for (const r of rows) {
+      if (r.del) continue;
+      const name = h('input', { value: r.name, style: 'width:190px' }) as HTMLInputElement;
+      name.onchange = () => { r.name = name.value.trim() || r.name; };
+      const pen = h('select', {}) as HTMLSelectElement;
+      for (let i = 1; i <= 16; i++) pen.append(h('option', { value: String(i) }, `${i} (${PEN_MM[i]} mm)`));
+      pen.value = String(r.pen); pen.onchange = () => { r.pen = parseInt(pen.value, 10); render(); };
+      const col = h('input', { type: 'color', value: r.color }) as HTMLInputElement;
+      col.onchange = () => { r.color = col.value; render(); };
+      const dash = h('select', {}) as HTMLSelectElement;
+      for (const [k, l] of Object.entries(DASH_LABELS)) dash.append(h('option', { value: k }, l));
+      dash.value = r.dash; dash.onchange = () => { r.dash = dash.value as DashName; render(); };
+      const w = Math.max(0.6, PEN_MM[r.pen] * 4);
+      const da = (DASHES[r.dash] ?? []).map((v) => v * 4).join(' ');
+      const prev = h('span', {});
+      prev.innerHTML = `<svg width="90" height="14"><line x1="2" y1="7" x2="88" y2="7" stroke="${r.color}" stroke-width="${w}"${da ? ` stroke-dasharray="${da}"` : ''}/></svg>`;
+      const n = uses(r.id);
+      const del = h('button', { title: n ? 'Wird verwendet' : tpl.has(r.id) ? 'Vorlagenstil' : 'Löschen' }, '✕') as HTMLButtonElement;
+      del.disabled = n > 0 || tpl.has(r.id);
+      del.onclick = () => { r.del = true; render(); };
+      t.append(h('tr', {}, h('td', {}, name), h('td', {}, pen), h('td', {}, col), h('td', {}, dash), h('td', {}, prev), h('td', {}, n ? String(n) : ''), h('td', {}, del)));
+    }
+    const add = h('button', {}, 'Neu …') as HTMLButtonElement;
+    add.onclick = () => { rows.push({ id: newId('ls'), name: 'Neuer Linienstil', pen: 3, color: '#000000', dash: 'solid', isNew: true }); render(); };
+    body.append(t, h('div', { style: 'margin-top:8px' }, add));
+  };
+  render();
+  modal('Linienstile', body, [
+    { label: 'OK', primary: true, onClick: () => {
+      doc.transaction('Linienstile', () => {
+        for (const r of rows) {
+          if (r.del) { if (!r.isNew && doc.get(r.id)) doc.remove(r.id); continue; }
+          const patch = { name: r.name, pen: r.pen, color: r.color, dash: r.dash };
+          if (r.isNew) doc.add<LineStyleType>({ id: r.id, cat: 'type', of: 'lineStyle', order: 1000, ...patch } as LineStyleType);
+          else doc.update(r.id, patch);
+        }
+      });
+      app.refreshViews();
+    } },
+    { label: 'Abbrechen', onClick: () => {} },
+  ], 760);
 }
 
 // ------------------------------------------------------------ Auswahlfilter

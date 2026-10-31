@@ -10,14 +10,16 @@ import type { View, Level, ProjectInfo } from './core/view';
 import { levels } from './core/view';
 import type { V2 } from './core/geom';
 import { emptyBox, extendBox, boxValid } from './core/geom';
-import { sectionGeomPatch } from './elements/datums';
+import { sectionGeomPatch, findOrAddLineStyle, LineStyleType } from './elements/datums';
+import type { DashName } from './render/styles';
 import { serialize, loadData } from './io/file';
 import { applyUnits } from './ui/dialogs';
 import { pageOf, pageSvg } from './modules/output/common';
 import { viewExtent } from './modules/output/viewports';
 import { defaultDef } from './modules/output/schedules';
 import { exportDxf as dxfOf } from './modules/output/dxfCommands';
-import { exportIfc as ifcOf } from './modules/view3d/ifc';
+import { exportIfc as ifcOf, IfcOptions } from './modules/view3d/ifc';
+export type { IfcOptions } from './modules/view3d/ifc';
 import { sheetsToPdfAsync } from './modules/output/pdf';
 import { absFiles as absFilesOf } from './modules/structure/steel';
 import { applyLocale as applyLocaleTo } from './modules/annotation/locale';
@@ -140,6 +142,10 @@ export function placeView(sheetId: Id, viewId: Id, center: V2, detail?: string):
 export const addSchedule = (o: { name: string; cat: string; def?: any; id?: Id }) =>
   add<View>({ id: o.id, cat: 'view', kind: 'schedule', name: o.name, scale: 1, detail: 'medium', data: o.def ?? defaultDef(doc, o.cat) } as any);
 
+/** Linienstil (Projekttyp: Farbe, Stift 1–16, Strichart) anlegen – oder den vorhandenen mit gleichen Eigenschaften liefern */
+export const addLineStyle = (o: { name?: string; color?: string; pen: number; dash?: DashName; id?: Id }): LineStyleType =>
+  doc.transaction('API: Linienstil', () => findOrAddLineStyle(doc, o));
+
 /** Gebäudeansichten um die Modellausdehnung legen */
 export const fitElevations = (margin = 6000) => fitElevationsTo(doc, margin);
 
@@ -157,7 +163,10 @@ export function exportDxf(viewId: Id, version: 'R2000' | 'R12' = 'R2000'): Uint8
   return r;
 }
 /** IFC4 des ganzen Modells */
-export function exportIfc(fileName = 'Projekt.ifc'): string { return ifcOf(doc, fileName).text; }
+export function exportIfc(fileName: string | IfcOptions = 'Projekt.ifc', opts: IfcOptions = {}): string {
+  if (typeof fileName !== 'string') { opts = fileName; fileName = 'Projekt.ifc'; }
+  return ifcOf(doc, fileName, new Date(), opts).text;
+}
 
 // ------------------------------------------------------------ CLI-Abschluss (Export nach dem Skript)
 export interface CliOptions { cwd?: string; out?: string; pdf?: string; dxf?: string; svg?: string; ifc?: string; abs?: string; fitElevations?: boolean }

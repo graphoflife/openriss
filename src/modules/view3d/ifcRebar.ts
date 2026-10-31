@@ -50,10 +50,10 @@ function cleanPath(p: V3[]): V3[] {
   return out;
 }
 
-function collectSets(doc: Doc): BarSet[] {
+function collectSets(doc: Doc, keep?: (el: El) => boolean): BarSet[] {
   const out: BarSet[] = [];
   for (const el of doc.all<Rebar>('rebar')) {
-    if (el.viewId) continue;
+    if (el.viewId || (keep && !keep(el))) continue;
     let g;
     try { g = rebarGeo(doc, el); } catch { continue; }
     const path = cleanPath(g.path);
@@ -91,8 +91,8 @@ function collectSets(doc: Doc): BarSet[] {
       out.push(...byLen.values());
     }
   };
-  for (const el of doc.all<AreaRebar>('areaRebar')) { if (!el.viewId) { try { flat(el, areaGeo(doc, el).layers, false); } catch { /* ungültige Fläche */ } } }
-  for (const el of doc.all<FabricArea>('fabricArea')) { if (!el.viewId) { try { flat(el, fabricGeo(doc, el).layers, true); } catch { /* ungültige Fläche */ } } }
+  for (const el of doc.all<AreaRebar>('areaRebar')) { if (!el.viewId && (!keep || keep(el))) { try { flat(el, areaGeo(doc, el).layers, false); } catch { /* ungültige Fläche */ } } }
+  for (const el of doc.all<FabricArea>('fabricArea')) { if (!el.viewId && (!keep || keep(el))) { try { flat(el, fabricGeo(doc, el).layers, true); } catch { /* ungültige Fläche */ } } }
   return out;
 }
 
@@ -103,8 +103,8 @@ export interface RebarResult { bars: number; sets: number; maps: number; byHost:
  * Bewehrung schreiben. prod: exportierte Bauteile (Element-ID → IFC), storeyAt: Geschoss für Stäbe ohne exportierten Host.
  * Liefert die Stäbe je Wirtbauteil (für IfcRelAggregates); Stäbe ohne Host werden dem Geschoss zugeordnet.
  */
-export function writeRebar(o: IfcOut, doc: Doc, prod: Map<Id, Prod>, storeyAt: (z: number) => StoreyRec): RebarResult {
-  const sets = collectSets(doc);
+export function writeRebar(o: IfcOut, doc: Doc, prod: Map<Id, Prod>, storeyAt: (z: number) => StoreyRec, keep?: (el: El) => boolean): RebarResult {
+  const sets = collectSets(doc, keep);
   const res: RebarResult = { bars: 0, sets: sets.length, maps: 0, byHost: new Map() };
   if (!sets.length) return res;
   const OH = o.OH;

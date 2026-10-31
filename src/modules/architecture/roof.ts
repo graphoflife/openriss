@@ -9,6 +9,7 @@ import { registerCategory, registerCommand, registerContextPanel, GROUPS, PropDe
 import { levelElev, typeOf } from '../../core/view';
 import { cached } from '../../core/cache';
 import { planRange } from '../../views/viewBuilder';
+import { slopedPrism } from '../../views/sectionEngine';
 import { fmtLen, fmtNum } from '../../core/units';
 import { Wall, wallInfo } from '../../elements/wall';
 import { app } from '../../app';
@@ -48,21 +49,8 @@ export function roofGeomOf(doc: Doc, r: El): RoofGeom {
   });
 }
 
-/** Prisma mit geneigter Ober-/Unterseite über einem Polygon (lotrechte Seiten) */
-export function slopedPrism(poly: Poly, zb: (p: V2) => number, zt: (p: V2) => number): Face[] {
-  const outer = ensureCCW(poly[0]); const holes = poly.slice(1).map((h) => ensureCW(h));
-  const L = (r: V2[], f: (p: V2) => number) => r.map((p) => ({ x: p.x, y: p.y, z: f(p) }));
-  const faces: Face[] = [
-    { pts: L(outer, zt), holes: holes.map((h) => L(h, zt)) },
-    { pts: L(outer.slice().reverse(), zb), holes: holes.map((h) => L(h.slice().reverse(), zb)) },
-  ];
-  for (const r of [outer, ...holes]) for (let i = 0; i < r.length; i++) {
-    const a = r[i], b = r[(i + 1) % r.length];
-    if (dist(a, b) < 1e-6) continue;
-    faces.push({ pts: [{ x: a.x, y: a.y, z: zb(a) }, { x: b.x, y: b.y, z: zb(b) }, { x: b.x, y: b.y, z: zt(b) }, { x: a.x, y: a.y, z: zt(a) }] });
-  }
-  return faces;
-}
+// Prisma mit geneigter Ober-/Unterseite: allgemeiner Körperbauer in der Schnittmaschine
+export { slopedPrism } from '../../views/sectionEngine';
 
 export function roofSolids(doc: Doc, r: El): Solid[] {
   const g = roofGeomOf(doc, r); const layers = roofLayers(doc, r);

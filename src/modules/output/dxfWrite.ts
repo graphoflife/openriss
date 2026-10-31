@@ -15,6 +15,8 @@ export interface DxfWriteOpts {
   layerColor?: (name: string) => number;
   /** alle Farben schwarz/VONLAYER */
   mono?: boolean;
+  /** Layer mit eigenem Stift (z.B. je Linienstil): Farbe, Linientyp und -stärke am Layer, Elemente VONLAYER */
+  layerPen?: (name: string) => Pen | undefined;
 }
 
 // ------------------------------------------------------------ Farben (ACI)
@@ -72,7 +74,8 @@ function clipPoly(pts: V2[], closed: boolean, r: BBox | null): { pts: V2[]; clos
 // ------------------------------------------------------------ Writer
 const num = (v: number) => { const r = Math.round(v * 1e6) / 1e6; return Object.is(r, -0) ? '0.0' : Number.isInteger(r) ? r.toFixed(1) : String(r); };
 
-interface LayerInfo { color: number }
+interface LayerInfo { color: number; pen?: Pen }
+const samePen = (a: Pen, b: Pen) => Math.round(a.w) === Math.round(b.w) && (a.dash ?? 'solid') === (b.dash ?? 'solid') && (a.color ?? '#000000').toLowerCase() === (b.color ?? '#000000').toLowerCase();
 
 export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuffer> {
   const r12 = o.version === 'R12';
@@ -92,7 +95,12 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
     let s = n || '0';
     if (r12) s = s.toUpperCase().replace(/Ä/g, 'AE').replace(/Ö/g, 'OE').replace(/Ü/g, 'UE').replace(/ß/g, 'SS').replace(/[^A-Z0-9_$-]+/g, '_').slice(0, 31) || '0';
     else s = s.replace(/[<>/\\":;?*|=`]+/g, '_');
-    if (!layers.has(s)) layers.set(s, { color: o.layerColor?.(n) ?? 7 });
+    if (!layers.has(s)) {
+      const pen = o.layerPen?.(n);
+      const rgb = rgbOf(pen?.color);
+      if (pen?.dash && pen.dash !== 'solid' && DASHES[pen.dash]?.length) ltypes.add(pen.dash);
+      layers.set(s, { color: pen ? (rgb ? nearestAci(...rgb) : 7) : o.layerColor?.(n) ?? 7, pen });
+    }
     return s;
   };
   const xp = (p: V2) => { extendBox(ext, p); return p; };
@@ -100,7 +108,11 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
   const head = (type: string, it: Prim, pen?: Pen, sub = '') => {
     g(E, 0, type);
     if (!r12) { g(E, 5, nh()); g(E, 330, H.brM); g(E, 100, 'AcDbEntity'); }
-    g(E, 8, layerName(o.layerOf(it)));
+    const lay = layerName(o.layerOf(it));
+    g(E, 8, lay);
+    // Stift wie Layer → alles VONLAYER
+    const lp = layers.get(lay)?.pen;
+    if (lp && pen && !it.ht && samePen(lp, pen)) { if (!r12 && sub) g(E, 100, sub); return; }
     const dash = pen?.dash ?? 'solid';
     if (pen && dash !== 'solid' && DASHES[dash]?.length) { ltypes.add(dash); g(E, 6, LTYPE_NAMES[dash]); }
     const col = pen?.color ?? (it.k === 'text' ? it.font.color : it.k === 'fill' ? it.fill.patColor ?? it.fill.color : undefined);
@@ -300,8 +312,11 @@ export function writeDxf(dl: DisplayList, o: DxfWriteOpts): Uint8Array<ArrayBuff
     if (!layers.has('0')) layers.set('0', { color: 7 });
     table('LAYER', H.layerT, layers.size);
     for (const [name, li] of layers) {
-      rec('LAYER', nh(), H.layerT, 'AcDbLayerTableRecord'); g(S, 2, name); g(S, 70, 0); g(S, 62, li.color); g(S, 6, 'CONTINUOUS');
-      if (!r12) g(S, 370, -3);
+      const lt = li.pen?.dash && li.pen.dash !== 'solid' && DASHES[li.pen.dash]?.length ? LTYPE_NAMES[li.pen.dash] : 'CONTINUOUS';
+      rec('LAYER', nh(), H.layerT, 'AcDbLayerTableRecord'); g(S, 2, name); g(S, 70, 0); g(S, 62, li.color); g(S, 6, lt);
+      const rgb = rgbOf(li.pen?.color);
+      if (!r12 && rgb && !(rgb[0] < 40 && rgb[1] < 40 && rgb[2] < 40)) g(S, 420, (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]);
+      if (!r12) g(S, 370, li.pen ? lwOf(li.pen) : -3);
     }
     g(S, 0, 'ENDTAB');
     table('STYLE', H.styleT, 1);

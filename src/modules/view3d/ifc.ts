@@ -4,7 +4,7 @@
 // (IfcMaterialLayerSetUsage); übrige Bauteile als IfcFacetedBrep aus den Solids. Bewehrung stabweise
 // (ifcRebar.ts), Schweizer Betonangaben (ifcCh.ts), Zuordnung je Kategorie über CategoryDef.ifc.
 import type { Doc, El, Id } from '../../core/doc';
-import { allCats, catDef, onHook } from '../../core/registry';
+import { allCats, catDef, onHook, Discipline } from '../../core/registry';
 import { levels, projectInfo, Level, Material, TypeEl } from '../../core/view';
 import { solidsOf } from '../../views/sectionEngine';
 import { coverFor } from '../structure/rebar/build';
@@ -75,12 +75,48 @@ function tailFor(ent: string, pt: string, el: El, doc: Doc): string {
 }
 const entName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+// ------------------------------------------------------------ Fachbereiche (Teilmodelle)
+const MEP_CATS = new Set(['pipe', 'duct', 'conduit', 'fbh', 'mepFixture', 'earthing']);
+const SITE_CATS = new Set(['topo', 'excavation']);
+const STRUCT_CATS = new Set(['column', 'beam', 'foundationIsolated', 'foundationWall', 'foundationSlab', 'rebar', 'areaRebar', 'fabricArea',
+  'embed', 'joint', 'insulZone', 'lightwell', 'stair', 'stairBearing']);
+/** Fachbereich eines Bauteils: Kategorie-Vorgabe, sonst Standardzuordnung; Wände/Decken nach «Tragwerk» */
+export function disciplineOf(el: El, doc: Doc): Discipline {
+  const d = catDef(el.cat)?.discipline;
+  if (d) return typeof d === 'function' ? d(el, doc) : d;
+  if (MEP_CATS.has(el.cat) || el.cat.startsWith('mep')) return 'mep';
+  if (SITE_CATS.has(el.cat) || el.cat.startsWith('topo')) return 'site';
+  if (STRUCT_CATS.has(el.cat)) return 'struct';
+  if (el.cat === 'wall' || el.cat === 'floor') return el.structural ? 'struct' : 'arch';
+  // Türen/Fenster füllen die Öffnungen ihrer Wand → gleicher Fachbereich wie der Host
+  if ((el.cat === 'door' || el.cat === 'window') && el.hostId) { const h = doc.get(el.hostId); if (h) return disciplineOf(h, doc); }
+  // gehostete Elemente (Einlagen in Fugen, Bewehrung …) folgen ihrem Host, wenn nichts anderes gilt
+  return 'arch';
+}
+
+/** Teilmodell: Fachbereiche und/oder Kategorien ein-/ausschließen */
+export interface IfcOptions {
+  /** nur diese Fachbereiche ('arch' | 'struct' | 'mep' | 'site') */
+  disciplines?: Discipline[];
+  /** nur diese Kategorien */
+  cats?: string[];
+  /** diese Kategorien weglassen */
+  excludeCats?: string[];
+}
+export function ifcFilter(doc: Doc, opts: IfcOptions = {}): (el: El) => boolean {
+  const discs = opts.disciplines?.length ? new Set<string>(opts.disciplines) : null;
+  const inc = opts.cats?.length ? new Set(opts.cats) : null;
+  const exc = new Set(opts.excludeCats ?? []);
+  return (el) => (!inc || inc.has(el.cat)) && !exc.has(el.cat) && (!discs || discs.has(disciplineOf(el, doc)));
+}
+
 /** Elemente, die als Bauteil exportiert werden (Modellelemente mit Geometrie; Räume immer) */
-export function ifcElements(doc: Doc): El[] {
+export function ifcElements(doc: Doc, opts: IfcOptions = {}): El[] {
   const out: El[] = [];
+  const keep = ifcFilter(doc, opts);
   for (const def of allCats()) {
     if (def.annotation || def.datum || SKIP_CATS.has(def.cat)) continue;
-    for (const el of doc.all(def.cat)) if (!el.viewId) out.push(el);
+    for (const el of doc.all(def.cat)) if (!el.viewId && keep(el)) out.push(el);
   }
   return out;
 }
@@ -94,7 +130,10 @@ export interface IfcResult {
   bars?: number; sets?: number; openings?: number;
 }
 
-export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()): IfcResult {
+export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', nowOrOpts: Date | IfcOptions = new Date(), opts: IfcOptions = {}): IfcResult {
+  const now = nowOrOpts instanceof Date ? nowOrOpts : new Date();
+  if (!(nowOrOpts instanceof Date)) opts = { ...nowOrOpts, ...opts };
+  const keep = ifcFilter(doc, opts);
   const pi = projectInfo(doc) ?? ({ name: 'Projekt', number: '', author: '', client: '', address: '', status: '' } as any);
   // Projektschlüssel für stabile GUIDs
   const seed = [pi.name, pi.number, pi.date, ...doc.all('view').map((v) => v.id).sort().slice(0, 3)].join('|');
@@ -134,6 +173,8 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
   const bld = o.add(`IFCBUILDING(${guid('building')},${OH},${SS(pi.name || 'Gebäude')},$,$,${ref(bldPl)},$,$,.ELEMENT.,$,$,$)`);
   o.add(`IFCRELAGGREGATES(${guid('agg-project')},${OH},$,$,${ref(project)},(${ref(site)}))`);
   o.add(`IFCRELAGGREGATES(${guid('agg-site')},${OH},$,$,${ref(site)},(${ref(bld)}))`);
+  // Grundstück als «Geschoss» für Gelände/Aushub (absolute Höhen, Platzierung relativ zum Grundstück)
+  const siteRec: StoreyRec = { lv: { id: '_site', name: 'Grundstück', elev: 0 }, id: site, pl: sitePl, frame: worldFrame({ x: 0, y: 0, z: 0 }), elems: [], spaces: [] };
 
   // Geschosse
   const allLv = levels(doc);
@@ -217,7 +258,7 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
   };
 
   // ---------------------------------------------------------- Bauteile
-  for (const el of ifcElements(doc)) {
+  for (const el of ifcElements(doc, opts)) {
     const def = catDef(el.cat);
     const host = el.hostId ? doc.get(el.hostId) : undefined;
     // reine Öffnungen in Wänden erscheinen als IfcOpeningElement des Hosts
@@ -239,22 +280,28 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
       const t: any = type;
       matNames = t?.layers?.length ? t.layers.map((l: any) => doc.get<Material>(l.mat)?.name ?? l.mat).join(', ') : (doc.get<Material>(t?.mat)?.name ?? '');
     } else {
-      const solids = solidsOf(doc, el);
+      let solids = solidsOf(doc, el);
+      if (def?.ifcSolids) { try { solids = def.ifcSolids(el, doc); } catch (e) { console.warn('IFC-Körper', el.cat, el.id, e); solids = []; } }
       if (!solids.length && !isRoom) continue;
       let minZ = Infinity;
       for (const s of solids) for (const f of s.faces) for (const p of f.pts) if (p.z < minZ) minZ = p.z;
-      const sr = storeyFor(el, minZ);
+      const sr = def?.ifcSite ? siteRec : storeyFor(el, minZ);
       st = sr; frame = sr.frame;
       const items: number[] = [];
+      let tess = false;
       for (const s of solids) {
-        const b = o.brep(s.faces, (p) => ({ x: p.x, y: p.y, z: p.z - sr.lv.elev }));
+        const loc = (p: { x: number; y: number; z: number }) => ({ x: p.x, y: p.y, z: p.z - sr.lv.elev });
+        // große Netze (Gelände) als Dreiecksnetz statt Brep
+        const big = s.faces.length > 400;
+        const b = big ? o.triMesh(s.faces, loc) : o.brep(s.faces, loc);
+        if (big && b) tess = true;
         if (!b) continue;
         const lk = solidLook(doc, el, s);
         o.styled(b, lk.color, lk.opacity, lk.name);
         items.push(b);
       }
       if (!items.length && !isRoom) continue;
-      reps = items.length ? [o.shapeRep(o.body, 'Body', 'Brep', items)] : [];
+      reps = items.length ? [o.shapeRep(o.body, 'Body', tess ? 'Tessellation' : 'Brep', items)] : [];
       // Materialien aus den Solids (eines oder Bestandteile)
       const mats = [...new Set(solids.map((s) => s.mat).filter((m): m is Id => !!m && !!o.material(m)))];
       matNames = mats.map((m) => doc.get<Material>(m)?.name ?? m).join(', ');
@@ -329,7 +376,7 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
   }
 
   // ---------------------------------------------------------- Bewehrung
-  const rb = writeRebar(o, doc, prod, storeyAt);
+  const rb = writeRebar(o, doc, prod, storeyAt, keep);
   for (const [hid, bars] of rb.byHost) {
     const hp = prod.get(hid);
     if (hp && bars.length) o.add(`IFCRELAGGREGATES(${guid('agg-rebar:' + hid)},${OH},$,$,${ref(hp.ent)},${refs(bars)})`);
@@ -341,6 +388,7 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', now = new Date()):
     const p = prod.get(f.el);
     if (p) o.add(`IFCRELFILLSELEMENT(${guid('fills:' + f.el)},${OH},$,$,${ref(f.opening)},${ref(p.ent)})`);
   }
+  if (siteRec.elems.length) o.add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid('contained:site')},${OH},$,$,${refs(siteRec.elems)},${ref(site)})`);
   for (const s of storeys) {
     if (s.elems.length) o.add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid('contained:' + s.lv.id)},${OH},$,$,${refs(s.elems)},${ref(s.id)})`);
     if (s.spaces.length) o.add(`IFCRELAGGREGATES(${guid('agg-storey:' + s.lv.id)},${OH},$,$,${ref(s.id)},${refs(s.spaces)})`);

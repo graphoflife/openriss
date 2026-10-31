@@ -1,5 +1,6 @@
 // Ansichtsfenster auf Plänen: Beschriftungselement 'viewport' (viewId = Plan, refId = Ansicht).
 // Zeichnet die Display-Liste der Ansicht im Maßstab 1:scale (Plan-mm = Ansichts-mm / scale) plus Ansichtstitel.
+import { lineStyleOfPrim } from '../../elements/datums';
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
@@ -101,8 +102,11 @@ function drawViewport(dl: DisplayList, el: El, doc: Doc): void {
     if (it.sel || it.inv) continue;
     const t: Prim = transformPrim(it, xf);
     if (t.k !== 'clip') {
-      const cat = it.o ? doc.get(it.o)?.cat : undefined;
+      const oel = it.o ? doc.get(it.o) : undefined; const cat = oel?.cat;
       t.o = vp.id; t.sub = cat ? 'cat:' + cat : undefined;
+      // Linienstil für den DXF-Export (Layer je Linienstil)
+      const ls = lineStyleOfPrim(doc, oel, it.sub);
+      if (ls) t.sub = 'ls:' + ls;
     }
     out.items.push(t);
   }

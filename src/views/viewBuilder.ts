@@ -186,6 +186,9 @@ function buildSection(doc: Doc, view: View, dl: DisplayList, o: BuildOpts): void
     if (def.drawSection) custom.push(el);
   }
   const pr: Projector = { origin: ctx.origin, dir: ctx.dir, toView: ctx.toView, depth: ctx.depth };
+  // Schnittflächen in Kategorie-Reihenfolge (z.B. Erdreich vor den Bauteilen)
+  const so = (el: El) => catDef(el.cat)?.sectionOrder ?? 50;
+  solidEls.sort((a, b) => so(a) - so(b));
   drawSolids(doc, solidEls, pr, dl, { cut: true, far: ctx.far, detail: view.detail, crop, style: view.style === 'shaded' ? 'shaded' : 'hidden' });
   ctx.modelBox = crop ?? dl.bbox();
   if (crop) dl.clip(null);

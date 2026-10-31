@@ -1,8 +1,8 @@
 // Bezugselemente: Ebenen, Raster, Referenzebenen; Modell-/Detaillinien; Schnitt- und Ansichtssymbole.
 import type { Doc, El, Id } from '../core/doc';
 import { V2, add, sub, mul, norm, perp, dist, apply, isMirror, lineLine, mid, fromAngle, angleOf, rotate, Mat2, matAngle, distToSeg, BBox } from '../core/geom';
-import { registerCategory, CategoryDef, SectionCtx, PropDef, GROUPS, Grip } from '../core/registry';
-import { Level, View, isPlanLike, isSectionLike, levels, makeProjector, cropBox } from '../core/view';
+import { registerCategory, CategoryDef, SectionCtx, PropDef, GROUPS, Grip, onHook } from '../core/registry';
+import { Level, View, TypeEl, typesOf, isPlanLike, isSectionLike, levels, makeProjector, cropBox } from '../core/view';
 import { fmtElev, fmtLen } from '../core/units';
 import { DisplayList } from '../render/displayList';
 import { catPen } from '../views/sectionEngine';
@@ -176,7 +176,101 @@ export const LINE_STYLES: Record<string, { label: string; pen: Pen }> = {
   green: { label: 'Grün', pen: { w: 2, color: '#108010' } },
   invisible: { label: '<Unsichtbare Linien>', pen: { w: 1, color: '#c0c0c0', dash: 'dot' } },
 };
-export const lineStyleOptions = (): [string, string][] => Object.entries(LINE_STYLES).map(([k, v]) => [k, v.label]);
+
+/**
+ * Linienstil als Projekttyp (wie «Linienstile» in Revit): Farbe, Stift (1–16) und Strichart frei kombinierbar.
+ * Die Vorlage legt die eingebauten Stile als Typen `ls_<Schlüssel>` an; Elemente verweisen mit `style` auf
+ * den Schlüssel (z.B. 'medium') oder die Typ-ID.
+ */
+export interface LineStyleType extends TypeEl { of: 'lineStyle'; color?: string; pen: number; dash?: DashName }
+
+const penOf = (t: LineStyleType): Pen => {
+  const pen: Pen = { w: Math.max(1, Math.min(16, Math.round(t.pen || 1))) };
+  if (t.color && !/^#0{6}$/i.test(t.color)) pen.color = t.color;
+  if (t.dash && t.dash !== 'solid') pen.dash = t.dash;
+  return pen;
+};
+/** Linienstil-Typ zu einem Stilnamen (Typ-ID oder eingebauter Schlüssel) */
+export function lineStyleType(doc: Doc | null | undefined, style: string | undefined): LineStyleType | undefined {
+  if (!doc || !style) return undefined;
+  const t = doc.get<LineStyleType>(style);
+  if (t?.cat === 'type' && t.of === 'lineStyle') return t;
+  const t2 = doc.get<LineStyleType>('ls_' + style);
+  return t2?.cat === 'type' && t2.of === 'lineStyle' ? t2 : undefined;
+}
+/** Stift eines Linienstils: Projekttyp, sonst eingebauter Stil, sonst dünn */
+export function linePen(doc: Doc | null | undefined, style: string | undefined): Pen {
+  const t = lineStyleType(doc, style);
+  if (t) return penOf(t);
+  return LINE_STYLES[style ?? '']?.pen ?? { w: 1 };
+}
+/** Anzeigename eines Linienstils */
+export function lineStyleLabel(doc: Doc | null | undefined, style: string | undefined): string {
+  return lineStyleType(doc, style)?.name ?? LINE_STYLES[style ?? '']?.label ?? style ?? '';
+}
+/** Alle Linienstile des Projekts (eingebaute zuerst, in ihrer Reihenfolge) */
+export function lineStyles(doc: Doc): LineStyleType[] {
+  const keys = Object.keys(LINE_STYLES);
+  const rank = (t: LineStyleType) => { const i = keys.indexOf(t.id.replace(/^ls_/, '')); return i >= 0 && t.id.startsWith('ls_') ? i : keys.length; };
+  return typesOf<LineStyleType>(doc, 'lineStyle').sort((a, b) => rank(a) - rank(b) || (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name, 'de'));
+}
+/** Optionen für Auswahllisten: eingebaute Stile unter ihrem Schlüssel (alte Dateien bleiben gültig), sonst Typ-ID */
+export const lineStyleOptions = (doc?: Doc): [string, string][] => {
+  const types = doc ? lineStyles(doc) : [];
+  if (!types.length) return Object.entries(LINE_STYLES).map(([k, v]) => [k, v.label]);
+  return types.map((t) => {
+    const k = t.id.replace(/^ls_/, '');
+    return [t.id.startsWith('ls_') && LINE_STYLES[k] ? k : t.id, t.name];
+  });
+};
+/** Fachstile der Vorlage (Haustechnik): Elektro magenta, Abwasser braun, Kältemittel */
+const FACH_STYLES: [string, string, string, number, DashName][] = [
+  ['ls_e_haar', 'Elektro Haarlinie', '#d0209c', 1, 'solid'], ['ls_e_fein', 'Elektro fein', '#d0209c', 2, 'solid'],
+  ['ls_e_duenn', 'Elektro dünn', '#d0209c', 3, 'solid'], ['ls_e_mittel', 'Elektro mittel', '#d0209c', 5, 'solid'],
+  ['ls_e_strich', 'Elektro gestrichelt', '#d0209c', 2, 'dash'],
+  ['ls_sw_duenn', 'Abwasser dünn', '#8b4513', 3, 'solid'], ['ls_sw_mittel', 'Abwasser mittel', '#8b4513', 5, 'solid'],
+  ['ls_sw_breit', 'Abwasser breit', '#8b4513', 6, 'solid'], ['ls_sw_strich', 'Abwasser gestrichelt', '#8b4513', 3, 'dash'],
+  ['ls_kt_duenn', 'Kältemittel dünn', '#00a3a3', 3, 'solid'], ['ls_kt_mittel', 'Kältemittel mittel', '#00a3a3', 5, 'solid'],
+  ['ls_kt_strich', 'Kältemittel gestrichelt', '#00a3a3', 3, 'dash'],
+];
+export function lineStyleTemplate(): LineStyleType[] {
+  const out: LineStyleType[] = Object.entries(LINE_STYLES).map(([k, v], i) => ({
+    id: 'ls_' + k, cat: 'type', of: 'lineStyle', name: v.label, pen: v.pen.w, color: v.pen.color ?? '#000000', dash: v.pen.dash ?? 'solid', order: i,
+  } as LineStyleType));
+  FACH_STYLES.forEach(([id, name, color, pen, dash], i) => out.push({ id, cat: 'type', of: 'lineStyle', name, color, pen, dash, order: 100 + i } as LineStyleType));
+  return out;
+}
+/** Linienstil eines gezeichneten Grundelements (Detail-/Modelllinie, Bereichsrand) – für Layer je Linienstil */
+export function lineStyleOfPrim(doc: Doc, el: El | undefined, sub: string | undefined): string | undefined {
+  if (!el) return undefined;
+  if (el.cat === 'line') return el.style || 'thin';
+  if (el.cat === 'region' && sub === 'edge') return el.lineStyle ?? ((doc.get(el.typeId) as any)?.masking ? 'invisible' : 'thin');
+  return undefined;
+}
+/** fehlende Linienstil-Typen ergänzen (neues Projekt bzw. ältere Dateien) */
+export function ensureLineStyles(doc: Doc): void {
+  for (const t of lineStyleTemplate()) if (!doc.get(t.id)) doc.add(t);
+}
+/** Linienstil mit diesen Eigenschaften finden oder anlegen (Import, Skripte) */
+export function findOrAddLineStyle(doc: Doc, o: { name?: string; color?: string; pen: number; dash?: DashName; id?: Id }): LineStyleType {
+  const col = (o.color ?? '#000000').toLowerCase(); const dash = o.dash ?? 'solid'; const pen = Math.max(1, Math.min(16, Math.round(o.pen || 1)));
+  if (o.id) { const t = doc.get<LineStyleType>(o.id); if (t?.of === 'lineStyle') return t; }
+  else {
+    const hit = lineStyles(doc).find((t) => (t.color ?? '#000000').toLowerCase() === col && (t.dash ?? 'solid') === dash && penOf(t).w === pen && (!o.name || t.name === o.name));
+    if (hit) return hit;
+  }
+  let id = o.id ?? 'ls_' + col.replace('#', '') + '_' + pen + (dash !== 'solid' ? '_' + dash : '');
+  while (!o.id && doc.get(id)) id += '_';
+  const name = o.name ?? `${col === '#000000' ? 'Schwarz' : col} ${pen} ${dash === 'solid' ? 'voll' : DASH_LABEL_SHORT[dash]}`;
+  return doc.add<LineStyleType>({ id, cat: 'type', of: 'lineStyle', name, color: col, pen, dash, order: 1000 } as LineStyleType);
+}
+const DASH_LABEL_SHORT: Record<DashName, string> = { solid: 'voll', dash: 'gestrichelt', hidden: 'verdeckt', dot: 'punktiert', center: 'Strichpunkt', dashdot: 'Strich-Punkt', longdash: 'Langstrich' };
+onHook('template', (doc: Doc) => ensureLineStyles(doc));
+onHook('loaded', (doc: Doc) => {
+  if (doc.get('ls_medium') && doc.get('ls_kt_strich')) return;
+  doc.transaction('Linienstile ergänzen', () => ensureLineStyles(doc));
+  doc.clearHistory();
+});
 
 export interface LineEl extends El {
   cat: 'line';
@@ -186,8 +280,8 @@ export interface LineEl extends El {
   style: string;
   /** Modelllinie: Ebene; Detaillinie: viewId */
 }
-function drawLine(dl: DisplayList, el: El): void {
-  const l = el as LineEl; const pen = LINE_STYLES[l.style]?.pen ?? { w: 1 };
+function drawLine(dl: DisplayList, el: El, doc: Doc): void {
+  const l = el as LineEl; const pen = linePen(doc, l.style);
   if (l.arc) dl.arc(l.arc.c, l.arc.r, l.arc.a0, l.arc.a1, pen, { sub: 'line' });
   else dl.line(l.a, l.b, pen, { sub: 'line' });
 }
@@ -212,8 +306,8 @@ function transformArc(l: LineEl, m: Mat2): Partial<LineEl> {
 }
 registerCategory({
   cat: 'line', label: 'Linie', plural: 'Linien', planOrder: 60,
-  drawPlan: (ctx, el) => { if (!el.viewId && el.levelId === ctx.view.levelId) drawLine(ctx.dl, el); },
-  drawAnnotation: (dl, el) => drawLine(dl, el),
+  drawPlan: (ctx, el) => { if (!el.viewId && el.levelId === ctx.view.levelId) drawLine(ctx.dl, el, ctx.doc); },
+  drawAnnotation: (dl, el, doc) => drawLine(dl, el, doc),
   grips: (el) => [{ id: 'a', p: el.a, kind: 'end' }, { id: 'b', p: el.b, kind: 'end' }],
   dragGrip: (el, id, p) => {
     const l = el as LineEl;

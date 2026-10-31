@@ -121,6 +121,8 @@ export interface ProjectInfo extends El {
   locale?: 'DE' | 'CH';
   /** Höhenbezug: ±0.00 = … m ü. M. (Meter) */
   elev00?: number;
+  /** Projekt-Basispunkt in Landeskoordinaten (LV95, m): Modellursprung (0,0) = (E, N) – für Importe von Geländepunkten */
+  basePoint?: { E: number; N: number };
   /** Plankopf-Vorlage als Projektvorgabe (fehlt = nach Landesvorlage) */
   titleBlock?: string;
 }

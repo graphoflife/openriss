@@ -1,5 +1,6 @@
 // Fundamente: Einzelfundament (Punkt, unter Stützen), Streifenfundament (unter Wänden, von der Wand
 // abgeleitet und gehostet), Fundamentplatte/Bodenplatte (Skizze). Grundriss: verdeckt gestrichelt / Schnitt.
+import { flatSurface } from '../../views/surfaces';
 import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
@@ -139,6 +140,7 @@ registerCategory({
 
 registerCategory({
   cat: 'foundationSlab', label: 'Fundamentplatte', plural: 'Fundamentplatten', hasTypes: true, planOrder: 4,
+  surface: (el, doc) => { const fi = foundInfo(doc, el); return fi ? flatSurface(fi.z1, fi.z0) : null; },
   drawPlan: drawFound,
   solids: (el, doc) => foundSolids(doc, el),
   center: (el) => { const r = (el as FoundSlab).loops?.[0]; if (!r?.length) return null; let x = 0, y = 0; for (const p of r) { x += p.x; y += p.y; } return { x: x / r.length, y: y / r.length }; },

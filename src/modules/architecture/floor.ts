@@ -1,5 +1,6 @@
 // Geschossdecke: Skizze (Außenumriss + Innenumrisse = Öffnungen), Typ mit Schichten (oben → unten),
 // Oberkante = Ebene + Höhenversatz. Grundriss: Kante in Projektion bzw. Schnittfläche.
+import { flatSurface } from '../../views/surfaces';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import type { V2, MultiPoly } from '../../core/geom';
@@ -66,6 +67,7 @@ registerCategory({
     drawSlabPlan(ctx, 'floor', floorArea(ctx.doc, el), floorTop(ctx.doc, el), t?.layers ?? [], t?.coarseColor);
   },
   solids: (el, doc) => layerSolids(floorArea(doc, el), floorTop(doc, el), floorType(doc, el)?.layers ?? [], 'm_stb'),
+  surface: (el, doc) => { const t = floorTop(doc, el); return flatSurface(t, t - floorThick(doc, el)); },
   grips: (el, _doc, view) => loopGrips(el.loops, view),
   dragGrip: (el, id, p) => { const l = dragLoopGrip(el.loops, id, p); return l ? { loops: l } : undefined; },
   transform: (el, m, doc, view) => { if (view.kind !== 'plan' && view.kind !== 'ceiling') return; moveHostedCutouts(doc, el.id, m); return { loops: transformLoops(el.loops, m) }; },

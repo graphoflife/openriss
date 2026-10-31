@@ -7,7 +7,7 @@ import { cross3, dot3, sub3, signedArea } from '../../core/geom';
 import type { Face } from '../../core/registry';
 import type { Material } from '../../core/view';
 import { faceNormal } from '../../views/sectionEngine';
-import { cleanRing } from './meshes';
+import { cleanRing, triangulateFace } from './meshes';
 
 // ------------------------------------------------------------ Zeichenketten, Zahlen, GUIDs
 /** Zeichenkette für STEP: Apostroph/Backslash maskieren, Nicht-ASCII als \X2\…\X0\ */
@@ -224,6 +224,29 @@ export class IfcOut {
     }
     if (!out.length) return null;
     return this.add(`IFCFACETEDBREP(${ref(this.add(`IFCCLOSEDSHELL(${refs(out)})`))})`);
+  }
+
+  /** Dreiecksnetz (IfcTriangulatedFaceSet) – kompakt für große Netze (Gelände, Aushub); loc: Welt → lokal */
+  triMesh(faces: Face[], loc: (p: V3) => V3): number | null {
+    const pos: number[] = [], nrm: number[] = [];
+    const o0 = { x: 0, y: 0, z: 0 };
+    for (const f of faces) triangulateFace(f, o0, pos, nrm);
+    const idx = new Map<string, number>(); const coords: string[] = []; const tris: string[] = [];
+    const vid = (i: number): number => {
+      const q = loc({ x: pos[i], y: pos[i + 1], z: pos[i + 2] });
+      const k = R(q.x) + ',' + R(q.y) + ',' + R(q.z);
+      let id = idx.get(k);
+      if (!id) { coords.push('(' + k + ')'); id = coords.length; idx.set(k, id); }
+      return id;
+    };
+    for (let i = 0; i + 8 < pos.length; i += 9) {
+      const a = vid(i), b = vid(i + 3), c = vid(i + 6);
+      if (a === b || b === c || a === c) continue;
+      tris.push(`(${a},${b},${c})`);
+    }
+    if (!tris.length) return null;
+    const pl = this.add(`IFCCARTESIANPOINTLIST3D((${coords.join(',')}))`);
+    return this.add(`IFCTRIANGULATEDFACESET(${ref(pl)},$,.T.,(${tris.join(',')}),$)`);
   }
 
   // ---------------------------------------------------------- Darstellung

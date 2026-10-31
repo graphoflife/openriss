@@ -13,6 +13,7 @@ import { modal, toast } from '../../ui/dialogs';
 import { h } from '../../ui/shell';
 import { download } from '../../io/file';
 import { writeDxf, nearestAci, rgbOf } from './dxfWrite';
+import { linePen, lineStyleLabel, lineStyleOfPrim } from '../../elements/datums';
 import { parseDxf, decodeDxf, CadEnt, CadData, INSUNITS_MM } from './dxfParse';
 import { pageOf, fileBase } from './common';
 
@@ -46,8 +47,16 @@ function exportDxfDialog(): void {
 export function exportDxf(doc: Doc, v: View, version: 'R2000' | 'R12', mono: boolean): Uint8Array<ArrayBuffer> | null {
   const p = pageOf(doc, v); if (!p) return null;
   const catOfLayer = new Map<string, string>();
+  const stylePen = new Map<string, Pen>();
   const layerOf = (it: Prim): string => {
     let cat: string | undefined;
+    // Detail-/Modelllinien und Bereichsränder: ein Layer je Linienstil (mit Layerfarbe)
+    const ls = it.sub?.startsWith('ls:') ? it.sub.slice(3) : lineStyleOfPrim(doc, it.o ? doc.get(it.o) : undefined, it.sub);
+    if (ls && ls !== 'invisible') {
+      const name = 'Linien-' + lineStyleLabel(doc, ls).replace(/[<>]/g, '');
+      if (!stylePen.has(name)) stylePen.set(name, linePen(doc, ls));
+      return name;
+    }
     if (it.sub?.startsWith('cat:')) cat = it.sub.slice(4);
     else if (it.o) {
       const el = doc.get(it.o);
@@ -60,7 +69,7 @@ export function exportDxf(doc: Doc, v: View, version: 'R2000' | 'R12', mono: boo
     return name;
   };
   const layerColor = (name: string) => { const c = rgbOf(OBJECT_STYLES[catOfLayer.get(name) ?? '']?.color); return c ? nearestAci(...c) : 7; };
-  return writeDxf(p.dl, { version, scale: p.dl.scale || 1, layerOf, layerColor, mono });
+  return writeDxf(p.dl, { version, scale: p.dl.scale || 1, layerOf, layerColor, mono, layerPen: (name) => stylePen.get(name) });
 }
 
 registerCommand({ id: 'exportDxf', label: 'DXF', icon: 'dxf', tip: 'Aktive Ansicht (Modell-mm 1:1) bzw. aktiven Plan (Papier-mm) als DXF exportieren', run: exportDxfDialog });

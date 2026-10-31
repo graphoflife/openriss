@@ -18,6 +18,27 @@ export interface Solid {
   role?: string;
   /** im Schnitt nicht schraffieren (z.B. Glas) */
   noCut?: boolean;
+  /** Schnittfläche ohne Umriss füllen (z.B. Erdreich: die Geländelinie zeichnet die Kategorie selbst) */
+  noOutline?: boolean;
+  /** in Schnitten/Ansichten nur schneiden, nicht projizieren (z.B. Geländenetz) */
+  noProject?: boolean;
+}
+
+/** Fachbereich (Disziplin) eines Bauteils – für IFC-Teilmodelle */
+export type Discipline = 'arch' | 'struct' | 'mep' | 'site';
+
+/** Ober-/Unterseite eines flächigen Bauteils (Decke, Platte, Dach, Gelände) als Funktion der Lage */
+export interface Surface {
+  /** Höhe der Oberseite (absolut) im Punkt p */
+  topAt(p: V2): number;
+  /** Höhe der Unterseite (absolut) im Punkt p */
+  botAt(p: V2): number;
+  /** Knicklinien der Oberfläche (Grundriss), z.B. Übergänge einer Rampe */
+  creases?: { a: V2; b: V2 }[];
+  /** Höhenbereich (absolut) */
+  zMin: number; zMax: number;
+  /** eben (konstante Höhen) */
+  flat: boolean;
 }
 
 // ---------------------------------------------------------------- Ansichts-Kontext
@@ -127,6 +148,16 @@ export interface CategoryDef {
   drawAnnotation?(dl: DisplayList, el: El, doc: Doc, view: View): void;
   /** 3D-Körper */
   solids?(el: El, doc: Doc): Solid[];
+  /** Körper nur für den IFC-Export (statt solids, z.B. Arbeitsfuge als dünne Scheibe) */
+  ifcSolids?(el: El, doc: Doc): Solid[];
+  /** im IFC dem Grundstück (IfcSite) statt einem Geschoss zuordnen (Gelände, Aushub) */
+  ifcSite?: boolean;
+  /** Fachbereich für IFC-Teilmodelle (Standard je Kategorie, siehe ifc.ts) */
+  discipline?: Discipline | ((el: El, doc: Doc) => Discipline);
+  /** Ober-/Unterseite als Funktion der Lage (geneigte Decken, Rampen, Gelände) */
+  surface?(el: El, doc: Doc): Surface | null;
+  /** Reihenfolge der Schnittflächen in Schnitten (klein = zuerst, z.B. Erdreich vor Bauteilen) */
+  sectionOrder?: number;
   /** Im Schnitt: zusätzlich zur Solid-Darstellung selbst zeichnen und Solids nicht verwenden */
   sectionOnlyCustom?: boolean;
 
@@ -194,7 +225,7 @@ export function allCommands(): Command[] { return [...commands.values()]; }
 // ---------------------------------------------------------------- Multifunktionsleiste
 export interface RibbonItem { cmd: string; size?: 'large' | 'small'; }
 export interface RibbonPanel { tab: string; panel: string; items: RibbonItem[]; order?: number; }
-export const TABS = ['Architektur', 'Ingenieurbau', 'Gebäudetechnik', 'Einfügen', 'Beschriften', 'Ansicht', 'Verwalten', 'Ändern'];
+export const TABS = ['Architektur', 'Ingenieurbau', 'Gebäudetechnik', 'Grundstück', 'Einfügen', 'Beschriften', 'Ansicht', 'Verwalten', 'Ändern'];
 const panels: RibbonPanel[] = [];
 export function registerPanel(tab: string, panel: string, items: (string | RibbonItem)[], order = 50): void {
   const existing = panels.find((p) => p.tab === tab && p.panel === panel);

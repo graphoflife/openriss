@@ -4,7 +4,7 @@
 import type { Doc, El, Id } from '../core/doc';
 import type { Solid, Face } from '../core/registry';
 import { catDef } from '../core/registry';
-import { V2, V3, sub3, cross3, dot3, add3, mul3, lerp3, clipPolyByPlane, union, Poly, Ring, pointInRing, signedArea, BBox, boxOverlap, emptyBox, extendBox } from '../core/geom';
+import { V2, V3, sub3, cross3, dot3, add3, mul3, lerp3, clipPolyByPlane, union, intersection, Poly, MultiPoly, Ring, pointInRing, signedArea, BBox, boxOverlap, emptyBox, extendBox, ensureCCW, ensureCW, dist, sub, add, mul, norm, perp, lineLine, bboxOf } from '../core/geom';
 import { DisplayList } from '../render/displayList';
 import type { Pen, Fill } from '../render/styles';
 import { OBJECT_STYLES } from '../render/styles';
@@ -152,7 +152,7 @@ export function catPen(doc: Doc, cat: string, cut: boolean): Pen {
 /** Zeichnet Schnitt + Projektion der Elemente in die Display-Liste. */
 export function drawSolids(doc: Doc, els: El[], pr: Projector, dl: DisplayList, o: EngineOpts): void {
   const faces: ProjFace[] = [];
-  const cuts: { el: El; mat?: Id; color?: string; noCut?: boolean; polys: Poly[] }[] = [];
+  const cuts: { el: El; mat?: Id; color?: string; noCut?: boolean; noOutline?: boolean; polys: Poly[] }[] = [];
   for (const el of els) {
     const solids = solidsOf(doc, el);
     if (!solids.length) continue;
@@ -167,12 +167,13 @@ export function drawSolids(doc: Doc, els: El[], pr: Projector, dl: DisplayList, 
         const segs: [V2, V2][] = [];
         for (const f of s.faces) faceCut(f, pr, segs);
         const rings = chain(segs);
-        if (rings.length) cuts.push({ el, mat: s.mat, color: s.color, noCut: s.noCut, polys: ringsToPolys(rings) });
+        if (rings.length) cuts.push({ el, mat: s.mat, color: s.color, noCut: s.noCut, noOutline: s.noOutline, polys: ringsToPolys(rings) });
       }
     }
     if (o.cutOnly) continue;
     if (o.projFilter && !o.projFilter(el)) continue;
     for (const s of solids) {
+      if (s.noProject) continue;
       const m = materialOf(doc, s.mat);
       const fillCol = o.style === 'shaded' ? (s.color ?? m?.color ?? '#d8d8d8') : '#ffffff';
       for (const f of s.faces) {
@@ -204,7 +205,7 @@ export function drawSolids(doc: Doc, els: El[], pr: Projector, dl: DisplayList, 
     else dl.fill(f.rings, { color: f.fill }, f.pen);
   }
   // Schnittflächen: je Element + Material vereinigen
-  const groups = new Map<string, { el: El; mat?: Id; color?: string; noCut?: boolean; polys: Poly[] }>();
+  const groups = new Map<string, { el: El; mat?: Id; color?: string; noCut?: boolean; noOutline?: boolean; polys: Poly[] }>();
   for (const c of cuts) {
     const k = c.el.id + '|' + (c.mat ?? c.color ?? '');
     const g = groups.get(k);
@@ -216,7 +217,7 @@ export function drawSolids(doc: Doc, els: El[], pr: Projector, dl: DisplayList, 
     const cutPen = o.penFor ? o.penFor(g.el, true) : catPen(doc, g.el.cat, true);
     const fill: Fill = g.noCut ? { color: '#ffffff' } : cutFill(m?.cutPattern, m?.cutColor, o.detail);
     dl.begin(g.el.id);
-    for (const p of merged) dl.fill(p, fill, g.noCut ? { ...cutPen, w: 1 } : cutPen);
+    for (const p of merged) dl.fill(p, fill, g.noOutline ? undefined : g.noCut ? { ...cutPen, w: 1 } : cutPen);
   }
 }
 
@@ -236,6 +237,106 @@ function shadeColor(hex: string, n: V3): string {
 }
 
 // ------------------------------------------------------------ Hilfen zum Bau von Solids
+
+/** Volumen geschlossener Körper (Divergenzsatz; Flächen mit Löchern, Normalen nach außen) */
+export function solidVolume(solids: Solid[] | Face[][]): number {
+  let v = 0; let ref: V3 | null = null;
+  const ringVol = (r: V3[], o: V3) => {
+    let s = 0;
+    for (let i = 1; i + 1 < r.length; i++) {
+      const a = sub3(r[0], o), b = sub3(r[i], o), c = sub3(r[i + 1], o);
+      s += dot3(a, cross3(b, c));
+    }
+    return s;
+  };
+  for (const s of solids) {
+    const faces = Array.isArray(s) ? s : s.faces;
+    for (const f of faces) {
+      if (f.pts.length < 3) continue;
+      if (!ref) ref = f.pts[0];
+      const n = faceNormal(f.pts);
+      v += ringVol(f.pts, ref);
+      for (const h of f.holes ?? []) {
+        if (h.length < 3) continue;
+        const hn = faceNormal(h);
+        // Loch zählt negativ – unabhängig von seiner Orientierung
+        const hv = ringVol(h, ref);
+        v += dot3(hn, n) > 0 ? -hv : hv;
+      }
+    }
+  }
+  return Math.abs(v) / 6;
+}
+
+/** Prisma mit geneigter Ober-/Unterseite über einem Polygon (lotrechte Seiten) */
+export function slopedPrism(poly: Poly, zb: (p: V2) => number, zt: (p: V2) => number): Face[] {
+  const outer = ensureCCW(poly[0]); const holes = poly.slice(1).map((h) => ensureCW(h));
+  const L = (r: V2[], f: (p: V2) => number) => r.map((p) => ({ x: p.x, y: p.y, z: f(p) }));
+  const faces: Face[] = [
+    { pts: L(outer, zt), holes: holes.map((h) => L(h, zt)) },
+    { pts: L(outer.slice().reverse(), zb), holes: holes.map((h) => L(h.slice().reverse(), zb)) },
+  ];
+  for (const r of [outer, ...holes]) for (let i = 0; i < r.length; i++) {
+    const a = r[i], b = r[(i + 1) % r.length];
+    if (dist(a, b) < 1e-6) continue;
+    faces.push({ pts: [{ x: a.x, y: a.y, z: zb(a) }, { x: b.x, y: b.y, z: zb(b) }, { x: b.x, y: b.y, z: zt(b) }, { x: a.x, y: a.y, z: zt(a) }] });
+  }
+  return faces;
+}
+
+/** Fläche an Knicklinien (unendliche Geraden durch a–b) in Zellen teilen, in denen Ober-/Unterseite eben sind */
+export function splitAtCreases(area: Poly, creases: { a: V2; b: V2 }[]): MultiPoly {
+  let cells: MultiPoly = [area];
+  if (!creases.length) return cells;
+  const bb = bboxOf(area[0]);
+  const R = 4 * (Math.hypot(bb.max.x - bb.min.x, bb.max.y - bb.min.y) + 1000);
+  for (const c of creases) {
+    const d = norm(sub(c.b, c.a)); if (!d.x && !d.y) continue;
+    const n = perp(d);
+    // Gerade nur berücksichtigen, wenn sie die Fläche schneidet
+    const sd = area[0].map((p) => (p.x - c.a.x) * n.x + (p.y - c.a.y) * n.y);
+    if (Math.min(...sd) > -0.5 || Math.max(...sd) < 0.5) continue;
+    const half = (sg: number): Ring => {
+      const p0 = add(c.a, mul(d, -R)), p1 = add(c.a, mul(d, R));
+      return [p0, p1, add(p1, mul(n, sg * R)), add(p0, mul(n, sg * R))];
+    };
+    const next: MultiPoly = [];
+    for (const cell of cells) for (const sg of [1, -1]) next.push(...intersection(cell, [ensureCCW(half(sg))]));
+    cells = next;
+  }
+  return cells;
+}
+
+/**
+ * Körper über einer Fläche (mit Löchern, auch nicht konvex) mit beliebiger, stückweise ebener Ober- und
+ * Unterseite: Die Fläche wird an den Knicklinien in Zellen geteilt (oben/unten je Zelle eben), die
+ * Seitenflächen folgen dem geknickten Verlauf. Eine geschlossene Hülle ohne Nahtflächen an den Knicken.
+ */
+export function profiledPrism(area: Poly, zt: (p: V2) => number, zb: (p: V2) => number, creases: { a: V2; b: V2 }[] = []): Face[] {
+  const cells = splitAtCreases(area, creases);
+  const faces: Face[] = [];
+  const L = (r: V2[], f: (p: V2) => number) => r.map((p) => ({ x: p.x, y: p.y, z: f(p) }));
+  for (const cell of cells) {
+    const outer = ensureCCW(cell[0]); const holes = cell.slice(1).map((h) => ensureCW(h));
+    faces.push({ pts: L(outer, zt), holes: holes.map((h) => L(h, zt)) });
+    faces.push({ pts: L(outer.slice().reverse(), zb), holes: holes.map((h) => L(h.slice().reverse(), zb)) });
+  }
+  // Seitenflächen entlang der ursprünglichen Ränder, mit Zwischenpunkten an den Knicklinien
+  const rings = [ensureCCW(area[0]), ...area.slice(1).map((h) => ensureCW(h))];
+  for (const r of rings) for (let i = 0; i < r.length; i++) {
+    const a = r[i], b = r[(i + 1) % r.length];
+    if (dist(a, b) < 1e-6) continue;
+    const ts: number[] = [];
+    for (const c of creases) { const x = lineLine(a, b, c.a, c.b); if (x && x.t > 1e-6 && x.t < 1 - 1e-6) ts.push(x.t); }
+    ts.sort((u, v) => u - v);
+    const mids = ts.map((t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
+    const chain2 = [a, ...mids, b];
+    const bot = chain2.map((p) => ({ x: p.x, y: p.y, z: zb(p) }));
+    const top = chain2.slice().reverse().map((p) => ({ x: p.x, y: p.y, z: zt(p) }));
+    faces.push({ pts: [...bot, ...top] });
+  }
+  return faces;
+}
 
 /** Prisma aus Grundriss-Ring (beliebig orientiert) zwischen z0 und z1 */
 export function prism(ring: V2[], z0: number, z1: number, holes: V2[][] = []): Face[] {

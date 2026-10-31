@@ -9,7 +9,7 @@ import { WallTool, StructuralWallTool, LinesTool, GridTool, RefPlaneTool, LevelT
 import { MoveTool, CopyTool, RotateTool, MirrorTool, ArrayTool, ScaleTool, AlignTool, TrimTool, TrimSingleTool, SplitTool, OffsetTool, MatchTool, MeasureTool, PasteTool, copyToClipboard, pasteAt } from '../tools/modifyTools';
 import { Tool, ToolEvent } from '../tools/tool';
 import type { DisplayList } from '../render/displayList';
-import { modal, overrideDialog, purgeDialog, visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
+import { modal, overrideDialog, purgeDialog, visibilityDialog, shortcutsDialog, projectInfoDialog, unitsDialog, materialsDialog, objectStylesDialog, lineStylesDialog, selectionFilterDialog, helpDialog, viewRangeDialog, promptDialog } from './dialogs';
 import { getTempVis, resetTempVis } from '../views/viewBuilder';
 import { bumpTempVis } from '../views/canvasView';
 import { tempHide, tempIsolate, showMenu, SCALES } from './viewControlBar';
@@ -233,11 +233,12 @@ registerCommand({ id: 'projectInfo', label: 'Projekt- informationen', icon: 'inf
 registerCommand({ id: 'units', label: 'Projekt- einheiten', icon: 'measure', keys: ['UN'], run: unitsDialog });
 registerCommand({ id: 'materials', label: 'Materialien', icon: 'material', keys: ['MAT'], run: materialsDialog });
 registerCommand({ id: 'objectStyles', label: 'Objektstile', icon: 'thinlines', run: objectStylesDialog });
+registerCommand({ id: 'lineStyles', label: 'Linienstile', icon: 'thinlines', tip: 'Linienstile des Projekts: Farbe, Stiftbreite und Strichart frei kombinieren', run: lineStylesDialog });
 registerCommand({ id: 'keyboardShortcuts', label: 'Tastatur- befehle', icon: 'keyboard', keys: ['KS'], run: shortcutsDialog });
 registerCommand({ id: 'snapsDialog', label: 'Fang', icon: 'settings', run: snapDialog });
 registerCommand({ id: 'purge', label: 'Nicht verwendete bereinigen', icon: 'delete', run: purgeDialog });
 registerCommand({ id: 'overrideGraphics', label: 'Grafiken überschreiben', icon: 'thinlines', tip: 'Grafiken in Ansicht nach Element überschreiben (Farbe, Linienstärke, Halbton)', enabled: () => hasSel() && !!app.activeView(), run: () => overrideDialog(app.activeView()!, [...app.selection]) });
-registerPanel('Verwalten', 'Einstellungen', ['materials', 'objectStyles', 'snapsDialog', 'projectInfo', 'units', 'keyboardShortcuts'], 10);
+registerPanel('Verwalten', 'Einstellungen', ['materials', 'objectStyles', 'lineStyles', 'snapsDialog', 'projectInfo', 'units', 'keyboardShortcuts'], 10);
 registerPanel('Verwalten', 'Projekt', ['purge'], 20);
 
 // Fangüberschreibungen (wie Revit)

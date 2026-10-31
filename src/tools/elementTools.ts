@@ -96,7 +96,7 @@ export class LinesTool extends LineDrawTool {
     const s = localStorage.getItem('openriss.lineStyle'); if (s) this.style = s;
   }
   extraOptions(): OptionItem[] {
-    return [{ kind: 'select', key: 'style', label: 'Linienstil', value: this.style, options: lineStyleOptions(), onChange: (v) => { this.style = v; localStorage.setItem('openriss.lineStyle', v); } }];
+    return [{ kind: 'select', key: 'style', label: 'Linienstil', value: this.style, options: lineStyleOptions(app.doc), onChange: (v) => { this.style = v; localStorage.setItem('openriss.lineStyle', v); } }];
   }
   createSegment(a: V2, b: V2, arc?: any): void {
     const v = app.activeView()!;
