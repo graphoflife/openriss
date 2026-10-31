@@ -1,5 +1,5 @@
 // Modul: output – Pläne, Ansichtsfenster, Bauteillisten, Drucken/PDF, Export (SVG/PNG/DXF/CSV),
-// DXF- und Bildimport, Ausschnitte (Callouts) und Grundrisse für Ebenen.
+// DXF-, Vektorgrafik- (DXF/SVG/PDF) und Bildimport, Ausschnitte (Callouts) und Grundrisse für Ebenen.
 import './icons';
 import './sheets';
 import './viewports';
@@ -7,6 +7,7 @@ import './schedules';
 import './print';
 import './pdfCommands';
 import './dxfCommands';
+import './vectorCommands';
 import './images';
 import './callout';
 export {};

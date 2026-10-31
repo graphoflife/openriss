@@ -1,5 +1,7 @@
 // DXF-Import (ASCII): LINE, LWPOLYLINE, POLYLINE/VERTEX, CIRCLE, ARC, ELLIPSE, SPLINE, TEXT, MTEXT, ATTRIB,
 // SOLID/TRACE/3DFACE, HATCH (Vollfüllung), LEADER, INSERT (Blöcke aufgelöst, verschachtelt, Reihen) und DIMENSION (Block).
+// Linientypen (Gruppe 6, Tabelle LTYPE, Linientypfaktor 48/$LTSCALE) und Linienstärken (370) werden je Element aufgelöst
+// (VonLayer/VonBlock).
 // Ergebnis: kompakte Geometrie in Datei-Einheiten relativ zu einem Basispunkt. Rein funktional (ohne DOM).
 import { V2, Mat2, BBox, apply, compose, matScale, matAngle, isMirror, emptyBox, extendBox, boxValid } from '../../core/geom';
 
@@ -20,10 +22,18 @@ export interface CadEnt {
   L?: number;
   /** Farbe: ACI 1..255 oder -(RGB+1) */
   k?: number;
+  /** Linientyp: Index in CadData.ltypes (fehlt = durchgezogen) */
+  lt?: number;
+  /** Linienstärke in 1/100 mm (fehlt = Vorgabe) */
+  w?: number;
 }
+/** Linientyp: Name und Muster (Zeichnungseinheiten, Linientypfaktor eingerechnet; >0 Strich, <0 Lücke, 0 Punkt) */
+export interface CadLtype { name: string; pat: number[] }
 export interface CadData {
   ents: CadEnt[];
   layers: string[];
+  /** verwendete Linientypen */
+  ltypes: CadLtype[];
   /** Layer, die in der Datei aus/gefroren sind */
   hiddenLayers: string[];
   /** $INSUNITS (0 = ohne Einheit) */
@@ -175,21 +185,26 @@ function bspline(ctrl: V2[], knots: number[], deg_: number, w?: number[]): V2[] 
 export function parseDxf(text: string, maxEnts = 400000): CadData {
   const { sections } = readRecords(text);
   const header = sections.get('HEADER') ?? [];
-  let insunits = 0; let version = '';
+  let insunits = 0; let version = ''; let ltscale = 1;
   // HEADER besteht aus einem Datensatz-Strom mit 9er-Codes
   for (const r of header) for (let i = 0; i < r.c.length; i++) {
     if (r.c[i] !== 9) continue;
     if (r.v[i] === '$INSUNITS') insunits = parseInt(r.v[i + 1] ?? '0', 10) || 0;
     if (r.v[i] === '$ACADVER') version = r.v[i + 1] ?? '';
+    if (r.v[i] === '$LTSCALE') ltscale = parseFloat(r.v[i + 1] ?? '1') || 1;
   }
-  // Layer-Tabelle
+  // Layer- und Linientyp-Tabelle
   const layerColor = new Map<string, number>(); const hidden = new Set<string>();
+  const layerLt = new Map<string, string>(); const layerLw = new Map<string, number>(); const ltPat = new Map<string, number[]>();
   for (const r of sections.get('TABLES') ?? []) {
+    if (r.type === 'LTYPE' && r.has(2)) { const pat: number[] = []; for (let j = 0; j < r.c.length; j++) if (r.c[j] === 49) pat.push(parseFloat(r.v[j]) || 0); ltPat.set(r.str(2).toUpperCase(), pat); continue; }
     if (r.type !== 'LAYER' || !r.has(2)) continue;
     const name = r.str(2); const col = r.num(62, 7);
     layerColor.set(name, Math.abs(col) || 7);
     if (col < 0 || (r.num(70) & 1)) hidden.add(name);
     if (r.has(420)) layerColor.set(name, -(r.num(420) + 1));
+    if (r.has(6)) layerLt.set(name, r.str(6));
+    if (r.has(370)) layerLw.set(name, r.num(370, -3));
   }
   // Blöcke
   const blocks = new Map<string, { base: V2; recs: Rec[] }>();
@@ -202,24 +217,41 @@ export function parseDxf(text: string, maxEnts = 400000): CadData {
 
   const layers: string[] = []; const layerIdx = new Map<string, number>();
   const L = (name: string) => { let i = layerIdx.get(name); if (i === undefined) { i = layers.length; layers.push(name); layerIdx.set(name, i); } return i; };
+  const ltypes: CadLtype[] = []; const ltIdx = new Map<string, number>();
+  /** Linientyp-Index (null = durchgezogen) */
+  const ltOf = (name: string, f: number): number | undefined => {
+    const n = name.toUpperCase(); const pat = ltPat.get(n);
+    if (!n || n === 'CONTINUOUS' || n === 'BYLAYER' || n === 'BYBLOCK' || (pat && !pat.some((v) => v < 0))) return undefined;
+    const k = n + '|' + f; let i = ltIdx.get(k);
+    if (i === undefined) { i = ltypes.length; ltypes.push({ name, pat: (pat ?? []).map((v) => v * f) }); ltIdx.set(k, i); }
+    return i;
+  };
   const ents: CadEnt[] = []; const skipped: Record<string, number> = {};
   const skip = (t: string) => { skipped[t] = (skipped[t] ?? 0) + 1; };
   let tooMany = false;
 
-  interface Ctx { m: Mat2; layer: string; color: number; depth: number }
-  const resolve = (r: Rec, ctx: Ctx): { layer: string; k: number } => {
+  interface Ctx { m: Mat2; layer: string; color: number; depth: number; lt: string; lw: number; lts: number }
+  const resolve = (r: Rec, ctx: Ctx): { layer: string; k: number; lt: string; lw: number; lts: number } => {
     let layer = r.str(8, '0');
     if (layer === '0' && ctx.depth > 0) layer = ctx.layer;
     let k = r.num(62, 256);
     if (r.has(420)) k = -(r.num(420) + 1);
     else if (k === 0) k = ctx.color;
     else if (k === 256) k = layerColor.get(layer) ?? 7;
-    return { layer, k };
+    let lt = r.str(6, 'BYLAYER'); const ltu = lt.toUpperCase();
+    if (ltu === 'BYLAYER') lt = layerLt.get(layer) ?? 'CONTINUOUS'; else if (ltu === 'BYBLOCK') lt = ctx.lt;
+    let lw = r.num(370, -1);
+    if (lw === -1) lw = layerLw.get(layer) ?? -3; else if (lw === -2) lw = ctx.lw;
+    return { layer, k, lt, lw, lts: ctx.lts * r.num(48, 1) };
   };
   const push = (e: CadEnt, r: Rec, ctx: Ctx) => {
     if (ents.length >= maxEnts) { tooMany = true; return; }
-    const { layer, k } = resolve(r, ctx);
+    const { layer, k, lt, lw, lts } = resolve(r, ctx);
     e.L = L(layer); if (k !== 7) e.k = k;
+    if (e.t !== 't' && e.t !== 's') {
+      const li = ltOf(lt, lts * matScale(ctx.m)); if (li !== undefined) e.lt = li;
+      if (lw > 0) e.w = lw;
+    }
     ents.push(e);
   };
   const P = (m: Mat2, x: number, y: number) => apply(m, { x, y });
@@ -357,8 +389,8 @@ export function parseDxf(text: string, maxEnts = 400000): CadData {
         }
         case 'INSERT': case 'DIMENSION': {
           const name = r.str(2); const blk = blocks.get(name);
-          const { layer, k } = resolve(r, ctx);
-          const sub: Ctx = { m, layer, color: k, depth: ctx.depth + 1 };
+          const { layer, k, lt, lw, lts } = resolve(r, ctx);
+          const sub: Ctx = { m, layer, color: k, depth: ctx.depth + 1, lt, lw, lts };
           if (blk && ctx.depth < 12) {
             if (r.type === 'DIMENSION') walk(blk.recs, sub);
             else {
@@ -385,7 +417,7 @@ export function parseDxf(text: string, maxEnts = 400000): CadData {
       }
     }
   };
-  walk(sections.get('ENTITIES') ?? [], { m: I, layer: '0', color: 7, depth: 0 });
+  walk(sections.get('ENTITIES') ?? [], { m: I, layer: '0', color: 7, depth: 0, lt: 'CONTINUOUS', lw: -3, lts: ltscale });
   if (tooMany) skipped['(Grenze erreicht)'] = 1;
 
   // Basispunkt = Mitte der Umgrenzung, Koordinaten relativ (kleinere Zahlen, Genauigkeit)
@@ -403,7 +435,7 @@ export function parseDxf(text: string, maxEnts = 400000): CadData {
     if (e.b) e.b = e.b.map((b) => Math.round(b * 1e6) / 1e6);
   }
   const box = boxValid(bb) ? { min: { x: bb.min.x - base.x, y: bb.min.y - base.y }, max: { x: bb.max.x - base.x, y: bb.max.y - base.y } } : { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
-  return { ents, layers, hiddenLayers: layers.filter((l) => hidden.has(l)), insunits, base, box, version, skipped };
+  return { ents, layers, ltypes, hiddenLayers: layers.filter((l) => hidden.has(l)), insunits, base, box, version, skipped };
 }
 
 /** Umrandungen einer HATCH (Polylinien- und Kantenpfade: Linie, Bogen, Ellipse, Spline-Stützpunkte) */

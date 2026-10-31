@@ -63,7 +63,7 @@ function fileMenu(): void {
   m.append(h('div', { class: 'fm-sep' }), h('div', { class: 'fm-head' }, 'Exportieren / Drucken'));
   for (const id of ['print', 'exportPdf', 'exportPdfAll', 'exportSvg', 'exportPng', 'exportDxf', 'exportIfc', 'exportCsv']) item(id);
   m.append(h('div', { class: 'fm-sep' }), h('div', { class: 'fm-head' }, 'Einfügen'));
-  for (const id of ['importDxf', 'importImage', 'importProjectJson', 'loadSample']) item(id);
+  for (const id of ['importDxf', 'importVector', 'importImage', 'importProjectJson', 'loadSample']) item(id);
   m.append(h('div', { class: 'fm-sep' }));
   item('projectInfo'); item('keyboardShortcuts'); item('help');
   document.body.append(m);
@@ -140,7 +140,7 @@ registerPanel('Ingenieurbau', 'Bewehrung', ['rebar', 'stirrup', 'areaRebar', 'fa
 registerPanel('Ingenieurbau', 'Bezug', ['level', 'grid', 'refplane'], 60);
 
 registerCommand({ id: 'importProjectJson', label: 'Projekt aus JSON', icon: 'import', tip: 'Elementliste (JSON) prüfen und importieren – Fehler werden mit Element-ID und Feld gemeldet', run: importProjectJson });
-registerPanel('Einfügen', 'Verknüpfen / Importieren', ['importDxf', 'importImage', 'importProjectJson', 'loadSample'], 10);
+registerPanel('Einfügen', 'Verknüpfen / Importieren', ['importDxf', 'importVector', 'importImage', 'importProjectJson', 'loadSample'], 10);
 
 async function importProjectJson(): Promise<void> {
   let data: any;
