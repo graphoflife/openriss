@@ -2,7 +2,7 @@
 // Zoomen/Verschieben, Zeichnen der Display-Liste, Überlagerung (Auswahl, Griffe,
 // temporäre Bemaßungen, Werkzeugvorschau, Fangsymbole) und Weitergabe der Maus an Werkzeuge.
 import { app } from '../app';
-import type { View } from '../core/view';
+import { View, annoIn } from '../core/view';
 import { ViewportLike, catDef, registerViewport, Grip, TempDim, emitHook } from '../core/registry';
 import { DisplayList } from '../render/displayList';
 import { paint } from '../render/canvasPainter';
@@ -171,7 +171,7 @@ export class CanvasView implements ViewportLike {
       for (const id of sel) {
         const el = app.doc.get(id); if (!el) continue;
         const def = catDef(el.cat);
-        if (el.cat !== 'view' && el.viewId && el.viewId !== this.view.id) continue;
+        if (el.cat !== 'view' && el.viewId && !annoIn(app.doc, el, this.view)) continue;
         if (def?.grips && !el.pinned) {
           for (const g of def.grips(el, app.doc, this.view)) this.grips.push({ el, grip: g, s: this.toScreen(g.p) });
         }

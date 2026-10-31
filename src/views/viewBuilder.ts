@@ -1,11 +1,11 @@
 // Baut die Display-Liste einer Ansicht: Grundriss (symbolisch + Schnitt), Schnitt/Ansicht
 // (Schnitt-Engine), Zeichnungsansicht (nur Beschriftung). Pläne & Listen registrieren eigene Builder.
 import type { Doc, El, Id } from '../core/doc';
-import { catDef, allCats, dlBuilder, PlanCtx, SectionCtx } from '../core/registry';
-import { View, Level, makeProjector, isPlanLike, isSectionLike, DEFAULT_RANGE, cropBox, levelAbove } from '../core/view';
+import { catDef, allCats, dlBuilder, PlanCtx, SectionCtx, DLOpts } from '../core/registry';
+import { View, Level, makeProjector, isPlanLike, isSectionLike, DEFAULT_RANGE, cropBox, levelAbove, annoViewId } from '../core/view';
 import { DisplayList } from '../render/displayList';
 import { drawSolids, Projector, catPen } from './sectionEngine';
-import { boxCorners } from '../core/geom';
+import { boxCorners, BBox, boxValid, boxOverlap } from '../core/geom';
 import { applyPhaseGraphics, phaseVisible, applyOverrides } from '../core/phases';
 
 // ------------------------------------------------------------ Temporär ausblenden/isolieren (HH, HI …)
@@ -42,6 +42,9 @@ export function isVisibleInView(doc: Doc, view: View, el: El, ignoreTemp = false
 /** Elemente, die in Ansichten gezeichnet werden (Modell + Bezug + Beschriftung dieser Ansicht) */
 export function viewElements(doc: Doc, view: View): { model: El[]; annos: El[] } {
   const model: El[] = []; const annos: El[] = [];
+  // abhängige Ansicht: Beschriftungen der Primäransicht erscheinen ebenfalls
+  const rid = view.parentId ? annoViewId(doc, view) : view.id;
+  const mine = (el: El) => el.viewId === view.id || el.viewId === rid;
   for (const def of allCats()) {
     if (def.cat === 'type' || def.cat === 'material' || def.cat === 'project') continue;
     if (def.cat === 'view') {
@@ -50,9 +53,9 @@ export function viewElements(doc: Doc, view: View): { model: El[]; annos: El[] }
       continue;
     }
     for (const el of doc.all(def.cat)) {
-      if (def.annotation) { if (el.viewId === view.id && isVisibleInView(doc, view, el)) annos.push(el); continue; }
-      if (el.viewId && el.viewId !== view.id) continue; // ansichtsspezifisch (z.B. Detailbauteil)
-      if (el.viewId === view.id) { if (isVisibleInView(doc, view, el)) annos.push(el); continue; }
+      if (def.annotation) { if (mine(el) && isVisibleInView(doc, view, el)) annos.push(el); continue; }
+      if (el.viewId && !mine(el)) continue; // ansichtsspezifisch (z.B. Detailbauteil)
+      if (el.viewId) { if (isVisibleInView(doc, view, el)) annos.push(el); continue; }
       if (isVisibleInView(doc, view, el)) model.push(el);
     }
   }
@@ -71,11 +74,11 @@ export function planRange(doc: Doc, view: View) {
   return { level: lvl, cutZ: elev + r.cut, bottomZ: elev + r.bottom, topZ: elev + r.top, depthZ: elev + r.depth };
 }
 
-export interface BuildOpts { halftone?: boolean; noAnnotations?: boolean; noCrop?: boolean }
+export type BuildOpts = DLOpts;
 
 export function buildViewDL(doc: Doc, view: View, o: BuildOpts = {}): DisplayList {
   const custom = dlBuilder(view.kind);
-  if (custom) return custom(doc, view);
+  if (custom) return custom(doc, view, o);
   const dl = new DisplayList(view.scale || 100);
   dl.halftone = !!o.halftone;
   if (isPlanLike(view)) buildPlan(doc, view, dl, o);
@@ -94,13 +97,16 @@ function sortByOrder(els: El[]): El[] {
   return els.slice().sort((a, b) => (catDef(a.cat)?.planOrder ?? 50) - (catDef(b.cat)?.planOrder ?? 50));
 }
 
-function drawAnnos(doc: Doc, view: View, dl: DisplayList, annos: El[]): void {
+/** Beschriftungen zeichnen; crop: nur Elemente, die den Bereich berühren (Beschriftungszuschnitt abhängiger Ansichten) */
+function drawAnnos(doc: Doc, view: View, dl: DisplayList, annos: El[], crop?: BBox | null): void {
   for (const el of sortByOrder(annos)) {
     const def = catDef(el.cat);
-    dl.begin(el.id);
-    try {
-      if (def?.drawAnnotation) def.drawAnnotation(dl, el, doc, view);
-    } catch (e) { console.warn('Zeichenfehler', el.cat, e); }
+    if (!def?.drawAnnotation) continue;
+    const out = crop ? new DisplayList(dl.scale) : dl;
+    out.halftone = dl.halftone;
+    out.begin(el.id);
+    try { def.drawAnnotation(out, el, doc, view); } catch (e) { console.warn('Zeichenfehler', el.cat, e); }
+    if (out !== dl) { const b = out.bbox(); if (boxValid(b) && boxOverlap(b, crop!)) dl.append(out); }
   }
   dl.begin(null);
 }
@@ -110,7 +116,7 @@ function buildPlan(doc: Doc, view: View, dl: DisplayList, o: BuildOpts): void {
   const crop = o.noCrop ? null : cropBox(view);
   // Unterlage
   if (view.underlayLevelId && !o.halftone) {
-    const under = doc.all<View>('view').find((v) => v.kind === 'plan' && v.levelId === view.underlayLevelId);
+    const under = doc.all<View>('view').find((v) => v.kind === 'plan' && v.levelId === view.underlayLevelId && !v.parentId);
     if (under) {
       const udl = buildViewDL(doc, { ...under, underlayLevelId: null, hiddenCats: view.hiddenCats }, { halftone: true, noAnnotations: true, noCrop: true });
       for (const it of udl.items) if (it.k !== 'clip') dl.items.push({ ...it, o: null, ht: true, ns: false });
@@ -160,13 +166,25 @@ function buildPlan(doc: Doc, view: View, dl: DisplayList, o: BuildOpts): void {
   for (const el of sorted) if (symbolic(el) && (catDef(el.cat)!.planOrder ?? 50) >= 0) drawSym(el);
   dl.begin(null);
   if (crop) dl.clip(null);
-  if (!o.noAnnotations) drawAnnos(doc, view, dl, annos);
+  if (!o.noAnnotations) {
+    // abhängige Ansicht: Beschriftungen auf den Zuschnitt beschränken (Anschlusslinien, Masse der Primäransicht)
+    const ac = crop && view.parentId ? crop : null;
+    if (ac) dl.clip([boxCorners(ac)]);
+    drawAnnos(doc, view, dl, annos, ac);
+    if (ac) dl.clip(null);
+    if (view.depFrames) for (const h of planOverlays) { try { h(doc, view, dl); } catch (e) { console.warn('Teilpläne', e); } }
+  }
   if (crop && view.crop?.show) {
     dl.begin(view.id);
     dl.poly(boxCorners(crop), { w: 1, color: '#000000' }, true, { ns: true, sub: 'crop' });
     dl.begin(null);
   }
 }
+
+/** Zusätzliche Darstellung in Grundrissen nach den Beschriftungen (z.B. Rahmen der Teilpläne, Modul output) */
+export type PlanOverlay = (doc: Doc, view: View, dl: DisplayList) => void;
+const planOverlays: PlanOverlay[] = [];
+export function registerPlanOverlay(h: PlanOverlay): void { planOverlays.push(h); }
 
 export function sectionCtx(doc: Doc, view: View, dl: DisplayList): SectionCtx {
   const p = makeProjector(view);

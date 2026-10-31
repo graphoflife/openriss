@@ -3,7 +3,7 @@ import { app } from '../../app';
 import type { El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { registerCategory, registerCommand, registerContextPanel, GROUPS, PropDef } from '../../core/registry';
-import type { View } from '../../core/view';
+import { View, annoViewId } from '../../core/view';
 import { DisplayList, imageCorners } from '../../render/displayList';
 import { V2, apply, matAngle, matScale, sub, add, dist, rotate, mid } from '../../core/geom';
 import { fmtLen, parseLen } from '../../core/units';
@@ -120,7 +120,7 @@ class ImagePlaceTool extends Tool {
   prompt() { return 'Klicken Sie, um die Mitte des Bildes zu platzieren.'; }
   move(e: ToolEvent) { this.cur = e.p; }
   down(e: ToolEvent) {
-    const el: ImageEl = { id: newId('im'), cat: 'image', viewId: e.view.id, name: this.img.name, dataUrl: this.img.url, origin: { x: e.p.x - this.w / 2, y: e.p.y - this.hh / 2 }, width: this.w, height: this.hh };
+    const el: ImageEl = { id: newId('im'), cat: 'image', viewId: annoViewId(app.doc, e.view), name: this.img.name, dataUrl: this.img.url, origin: { x: e.p.x - this.w / 2, y: e.p.y - this.hh / 2 }, width: this.w, height: this.hh };
     app.doc.transaction('Bild einfügen', () => app.doc.add(el));
     app.setTool(null);
     app.select([el.id]);

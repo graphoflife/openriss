@@ -268,17 +268,58 @@ const vpFactories: ViewportFactory[] = [];
 export function registerViewport(f: ViewportFactory): void { vpFactories.push(f); }
 export function viewportFactory(kind: string): ViewportFactory | undefined { return vpFactories.find((f) => f.kinds.includes(kind)); }
 
+/** Optionen beim Aufbau einer Display-Liste: Unterlage (Halbton), ohne Beschriftung/Zuschnitt, Abschnitte einer umbrochenen Liste */
+export interface DLOpts {
+  halftone?: boolean; noAnnotations?: boolean; noCrop?: boolean;
+  /** umbrochene Bauteilliste: erster Abschnitt (0-basiert) und Anzahl ('rest' = alle folgenden) */
+  segFrom?: number; segCount?: number | 'rest';
+}
 /** Zusätzliche Display-Listen-Builder je Ansichtsart (z.B. Plan/Blatt) */
-export type DLBuilder = (doc: Doc, view: View) => DisplayList;
+export type DLBuilder = (doc: Doc, view: View, o?: DLOpts) => DisplayList;
 const dlBuilders = new Map<string, DLBuilder>();
 export function registerDLBuilder(kind: string, b: DLBuilder): void { dlBuilders.set(kind, b); }
 export function dlBuilder(kind: string): DLBuilder | undefined { return dlBuilders.get(kind); }
+
+/** Umbruch langer Listen (View.data.split): Tabellenhöhe je Abschnitt (mm), Abschnitte nebeneinander je Ansichtsfenster, Abstand, Zwischentotal je Abschnitt */
+export interface SchedSplit { maxH: number; cols?: number; gap?: number; subtotal?: boolean }
+/** Abschnitt einer umbrochenen Liste: eigene Display-Liste (Papier-mm, Ursprung oben links), Breite/Höhe */
+export interface SchedSeg { dl: DisplayList; w: number; h: number }
+/**
+ * Zeilen (Höhen in mm) auf Abschnitte verteilen: je Abschnitt höchstens maxH inklusive fester Höhe (Titel, Kopf;
+ * erster/folgende Abschnitte) und Übertragszeilen (am Anfang ab dem zweiten, am Ende vor einem weiteren Abschnitt).
+ * keep[i]: Zeile i bleibt mit Zeile i+1 zusammen (Gruppenkopf mit erster Zeile, letzte Zeile mit Fußzeile).
+ * Liefert [von, bis) je Abschnitt.
+ */
+export function paginate(hs: number[], keep: boolean[], maxH: number, fixedFirst: number, fixedNext: number, carryIn: number, carryOut: number): [number, number][] {
+  const blocks: [number, number, number][] = [];
+  for (let i = 0; i < hs.length;) {
+    let j = i, h = 0;
+    do { h += hs[j]; j++; } while (j < hs.length && keep[j - 1]);
+    blocks.push([i, j, h]); i = j;
+  }
+  const segs: [number, number][] = [];
+  let k = 0;
+  while (k < blocks.length) {
+    const cap = maxH - (segs.length ? fixedNext + carryIn : fixedFirst);
+    const from = blocks[k][0]; let to = from, used = 0;
+    while (k < blocks.length) {
+      const [, bt, bh] = blocks[k];
+      if (to > from && used + bh + (k + 1 < blocks.length ? carryOut : 0) > cap + 1e-6) break;
+      used += bh; to = bt; k++;
+    }
+    segs.push([from, to]);
+  }
+  if (!segs.length) segs.push([0, 0]);
+  return segs;
+}
 
 /** Sonderlisten: Bauteilliste (Ansichtsart 'schedule') mit eigener Darstellung, gewählt über View.data.kind (z. B. 'eisenliste') */
 export interface ScheduleKind {
   label: string;
   /** Display-Liste in Papier-mm (Plan, Druck, Export), Ursprung oben links */
   dl: DLBuilder;
+  /** Umbruch in Abschnitte (Übertrag, Zwischentotal); Listen ohne layout werden nicht umbrochen */
+  layout?(doc: Doc, view: View, split: SchedSplit): SchedSeg[];
   /** HTML für die Tabellenansicht */
   html(doc: Doc, view: View): string;
   csv?(doc: Doc, view: View): string;

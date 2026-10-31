@@ -4,7 +4,7 @@ import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, sub, mul, perp, norm, dist, mid, angleOf, apply, polyArea, ensureCCW, ensureCW, signedArea } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
-import type { View } from '../../core/view';
+import { View, annoViewId } from '../../core/view';
 import { DisplayList } from '../../render/displayList';
 import { patternOptions } from '../../render/styles';
 import type { Pen, Fill } from '../../render/styles';
@@ -136,7 +136,7 @@ export function startRegionTool(): void {
   }, { kinds: ANNO_KINDS, extra });
   t.id = 'filledRegion';
   t.placement = pl;
-  viewId = app.activeView()?.id ?? '';
+  viewId = annoViewId(app.doc, app.activeView());
   startTool(t, 'filledRegion');
 }
 
@@ -149,7 +149,7 @@ export function startCloudTool(): void {
     app.select([el.id]);
   }, { kinds: ANNO_KINDS, open: false });
   t.id = 'revisionCloud';
-  viewId = app.activeView()?.id ?? '';
+  viewId = annoViewId(app.doc, app.activeView());
   startTool(t, 'revisionCloud');
 }
 

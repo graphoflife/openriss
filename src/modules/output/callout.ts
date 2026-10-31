@@ -4,7 +4,7 @@ import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { registerCategory, registerCommand, catDef, onHook, GROUPS, PropDef } from '../../core/registry';
-import { View, Level, levels, isPlanLike, DEFAULT_RANGE, VIEW_KIND_LABEL } from '../../core/view';
+import { View, Level, levels, isPlanLike, DEFAULT_RANGE, VIEW_KIND_LABEL, rootView, detachView } from '../../core/view';
 import { DisplayList } from '../../render/displayList';
 import { V2, BBox, add, sub, mul, norm, dist, dot, apply, arcPoints } from '../../core/geom';
 import { sectionGeomPatch, sheetRefOf } from '../../elements/datums';
@@ -168,12 +168,13 @@ class CalloutTool extends Tool {
 
 export function createCallout(parent0: View, r: BBox, scale: number): Id {
   const doc = app.doc;
-  const parent = doc.get<View>(parent0.id) ?? parent0;
+  // in einer abhängigen Ansicht gehört der Ausschnitt zur Primäransicht (erscheint in allen Teilplänen)
+  const parent = rootView(doc, doc.get<View>(parent0.id) ?? parent0);
   const marker = nextMarker(doc);
   const kids = doc.all<View>('view').filter((v) => v.data?.calloutOf === parent.id).length;
   const name = isPlanLike(parent) ? `${parent.name} - Ausschnitt ${kids + 1}` : `Detail ${marker}`;
-  const child: View = JSON.parse(JSON.stringify(parent));
-  child.id = newId('vw');
+  const child: View = detachView(JSON.parse(JSON.stringify(parent)), parent);
+  child.id = newId('vw'); delete child.depFrames;
   child.name = uniqueName(doc, name);
   child.scale = scale; child.detail = 'fine';
   child.titleOnSheet = undefined;

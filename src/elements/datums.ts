@@ -341,6 +341,10 @@ export function sheetRefOf(doc: Doc, v: View): { detail: string; sheet: string }
     const s = doc.get<View>(vp.viewId);
     if (s) return { detail: String(vp.detail ?? '1'), sheet: s.sheetNo ?? '' };
   }
+  // nicht platziert: erste platzierte abhängige Ansicht (Teilplan)
+  for (const d of doc.all<View>('view').filter((x) => x.parentId === v.id).sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }))) {
+    const r = sheetRefOf(doc, d); if (r) return r;
+  }
   return null;
 }
 
@@ -413,8 +417,9 @@ registerCategory({
   },
   grips: (el, doc, view) => {
     const v = el as View;
-    // eigener Zuschneidebereich (Rahmen in der Ansicht selbst gewählt)
-    if (v.id === view.id) {
+    // eigener Zuschneidebereich (Rahmen in der Ansicht selbst gewählt); Teilplan-Rahmen in der Übersicht derselben Ebene
+    const depFrame = v.id !== view.id && !!v.parentId && isPlanLike(v) && !!view.depFrames && v.levelId === view.levelId;
+    if (v.id === view.id || depFrame) {
       if (!v.crop) return [];
       const b = cropBox({ ...v, crop: { ...v.crop, on: true } })!;
       const mx = (b.min.x + b.max.x) / 2, my = (b.min.y + b.max.y) / 2;

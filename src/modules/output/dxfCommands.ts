@@ -4,7 +4,7 @@ import { app } from '../../app';
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { registerCategory, registerCommand, registerContextPanel, catDef, GROUPS, PropDef } from '../../core/registry';
-import type { View } from '../../core/view';
+import { View, annoViewId } from '../../core/view';
 import { DisplayList, Prim, Font } from '../../render/displayList';
 import { OBJECT_STYLES, Pen } from '../../render/styles';
 import { V2, Mat2, apply, compose, matScale, matAngle, isMirror, mid, rotation } from '../../core/geom';
@@ -303,7 +303,7 @@ async function importDxfCmd(): Promise<void> {
         offset = vb ? mid(vb.min, vb.max) : { x: 0, y: 0 };
       }
       const el: CadImport = {
-        id: newId('ci'), cat: 'cadimport', viewId: v.id, name: file.name, unit: u, offset, rotation: 0, base: data.base, box: data.box,
+        id: newId('ci'), cat: 'cadimport', viewId: annoViewId(app.doc, v), name: file.name, unit: u, offset, rotation: 0, base: data.base, box: data.box,
         entities: data.ents, layers: data.layers, hiddenLayers: onlyVisible.checked ? data.hiddenLayers : [], colors: colors.value as CadImport['colors'],
       };
       app.doc.transaction('DXF importieren', () => app.doc.add(el));

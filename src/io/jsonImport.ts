@@ -62,6 +62,7 @@ export function validate(els: El[], d: Doc): ImportError[] {
       else if (t.cat !== 'type' || (t.of && t.of !== e.cat && !(def?.hasTypes === false))) err('typeId', `Typ „${e.typeId}“ gehört zu „${t.of}“, nicht zu „${e.cat}“`);
     }
     if (e.cat === 'view' && e.kind === 'plan') ref('levelId', ['level']);
+    if (e.cat === 'view') ref('parentId', ['view']);
     if (e.cat === 'view' && e.kind === 'section' && (!isV2(e.lineA) || !isV2(e.lineB))) err('lineA', 'Schnittlinie lineA/lineB fehlt');
   }
   return errs;

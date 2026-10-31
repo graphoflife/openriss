@@ -6,7 +6,7 @@ import { app } from '../../../app';
 import type { Doc, El, Id } from '../../../core/doc';
 import { V2, add, sub, mul, dot, dist, len, norm, perp, angleOf, fromAngle, mid } from '../../../core/geom';
 import { catDef, registerCommand, registerContextPanel, registerPanel } from '../../../core/registry';
-import type { View } from '../../../core/view';
+import { View, annoIn } from '../../../core/view';
 import type { DisplayList } from '../../../render/displayList';
 import { textBox } from '../../../render/displayList';
 import { isVisibleInView, buildViewDL } from '../../../views/viewBuilder';
@@ -155,7 +155,7 @@ function candidates(it: Item, s: number): Cand[] {
 export function arrangeTags(doc: Doc, view: View, only?: Set<Id>): Map<Id, Partial<RebarTag>> {
   const s = view.scale || 100;
   const res = new Map<Id, Partial<RebarTag>>();
-  const tags = doc.all<RebarTag>('rebarTag').filter((t) => t.viewId === view.id && isVisibleInView(doc, view, t, true));
+  const tags = doc.all<RebarTag>('rebarTag').filter((t) => annoIn(doc, t, view) && isVisibleInView(doc, view, t, true));
   const { segs, boxes: textBoxes } = obstacles(doc, view);
   const placed: { b: OBB; id: Id }[] = []; const leaders: [V2, V2][] = [];
   const items: Item[] = [];
@@ -247,7 +247,7 @@ registerCommand({
         if (r && (r.kind === 'plan' || r.kind === 'section')) run(r);
       }
     } else {
-      const sel = app.selected().filter((e) => e.cat === 'rebarTag' && e.viewId === v.id).map((e) => e.id);
+      const sel = app.selected().filter((e) => e.cat === 'rebarTag' && annoIn(app.doc, e, v)).map((e) => e.id);
       run(v, sel.length ? new Set(sel) : undefined);
     }
     app.status(n ? `${n} Bewehrungsbeschriftung(en) angeordnet${rest ? ` – ${rest} Überdeckung(en) verbleiben` : ', keine Überdeckungen'}.` : 'Keine Bewehrungsbeschriftungen in dieser Ansicht.');

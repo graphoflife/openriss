@@ -5,7 +5,7 @@ import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, add, sub, mul, norm, perp, dist, mid, fromAngle, angleOf, apply, applyVec, isMirror, matAngle, sideDist, deg, rad, clamp } from '../../core/geom';
 import { registerCategory, PropDef, GROUPS, Grip } from '../../core/registry';
-import type { View } from '../../core/view';
+import { View, annoViewId } from '../../core/view';
 import { DisplayList } from '../../render/displayList';
 import type { Pen } from '../../render/styles';
 import { fmtNum, fmtLen } from '../../core/units';
@@ -91,7 +91,7 @@ export class InsulationTool extends LineDrawTool {
   move(e: ToolEvent): void { this.viewId = e.view.id; super.move(e); }
   down(e: ToolEvent): void { this.viewId = e.view.id; super.down(e); }
   private make(a: V2, b: V2): Insul {
-    const el: Insul = { id: newId('in'), cat: 'insulation', viewId: this.viewId || app.activeView()?.id || '', a, b, width: InsulationTool.width } as Insul;
+    const el: Insul = { id: newId('in'), cat: 'insulation', viewId: annoViewId(app.doc, app.doc.get<View>(this.viewId) ?? app.activeView()), a, b, width: InsulationTool.width } as Insul;
     if (InsulationTool.style !== 'loops') el.style = InsulationTool.style;
     return el;
   }
@@ -186,7 +186,7 @@ export class DetailTool extends Tool {
   space(): boolean { this.rot += Math.PI / 2; app.redrawOverlay(); return true; }
   move(e: ToolEvent): void { this.cur = e.p; }
   private make(a: V2, b: V2 | null, view: View): DetailEl {
-    const el: DetailEl = { id: newId('dc'), cat: 'detail', viewId: view.id, typeId: this.placement!.proto.typeId, p: a, rot: this.rot } as DetailEl;
+    const el: DetailEl = { id: newId('dc'), cat: 'detail', viewId: annoViewId(app.doc, view), typeId: this.placement!.proto.typeId, p: a, rot: this.rot } as DetailEl;
     if (b) { el.rot = angleOf(sub(b, a)); el.len = Math.max(1, dist(a, b)); }
     return el;
   }
@@ -344,9 +344,9 @@ export class SymbolTool extends Tool {
   space(): boolean { this.rot += Math.PI / 4; app.redrawOverlay(); return true; }
   move(e: ToolEvent): void { this.cur = e.p; }
   private make(a: V2, b: V2 | null, view: View): SymEl {
-    if (SymbolTool.kind === 'slope') return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'slope', p: a, b: b ?? a, slope: SymbolTool.slope } as SymEl;
-    if (SymbolTool.kind === 'scalebar') return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'scalebar', p: a, rot: this.rot || undefined } as SymEl;
-    return { id: newId('sy'), cat: 'symbol', viewId: view.id, kind: 'north', p: a, rot: this.rot || undefined } as SymEl;
+    if (SymbolTool.kind === 'slope') return { id: newId('sy'), cat: 'symbol', viewId: annoViewId(app.doc, view), kind: 'slope', p: a, b: b ?? a, slope: SymbolTool.slope } as SymEl;
+    if (SymbolTool.kind === 'scalebar') return { id: newId('sy'), cat: 'symbol', viewId: annoViewId(app.doc, view), kind: 'scalebar', p: a, rot: this.rot || undefined } as SymEl;
+    return { id: newId('sy'), cat: 'symbol', viewId: annoViewId(app.doc, view), kind: 'north', p: a, rot: this.rot || undefined } as SymEl;
   }
   down(e: ToolEvent): void {
     if (e.button !== 0) return;

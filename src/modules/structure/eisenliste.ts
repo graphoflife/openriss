@@ -6,7 +6,7 @@
 import type { Doc } from '../../core/doc';
 import type { V2 } from '../../core/geom';
 import { View, projectInfo } from '../../core/view';
-import { registerScheduleKind, GROUPS, PropDef } from '../../core/registry';
+import { registerScheduleKind, GROUPS, PropDef, SchedSplit, SchedSeg, paginate } from '../../core/registry';
 import { DisplayList, textWidth } from '../../render/displayList';
 import { Figure, figurePolyline, kgNom } from './rebar/sshv';
 import { rebarNorm, rebarPlans } from './rebar/norm';
@@ -166,77 +166,143 @@ function rect(dl: DisplayList, x0: number, y0: number, x1: number, y1: number, p
   if (fill) dl.fill([r], { color: fill });
   dl.poly(r, pen, true, { ns: true });
 }
-/** Liste als Display-Liste (Papier-mm, Ursprung oben links, y nach oben) */
-export function eisenlisteDL(doc: Doc, view: View): DisplayList {
+/** Teil der Liste auf dem Plan: Höhe, mit dem folgenden zusammenhalten, Abschnitt (normal/spezial) und Position */
+interface ElItem { h: number; keep?: boolean; sec?: 'normal' | 'special'; row?: EisenRow; draw(dl: DisplayList, y: number): void }
+/** Bausteine der Eisenliste: Kopf (Titel), Kopfzeile, Positionen, Zusammenfassung je Ø */
+function eisenParts(doc: Doc, view: View): { W: number; items: ElItem[]; head(dl: DisplayList, cont: boolean): void; colHead(dl: DisplayList, y: number): void } {
   const d = view.data ?? {};
   const plan: string | undefined = typeof d.plan === 'string' ? d.plan : undefined;
   const part: string = d.part ?? 'all';
-  const dl = new DisplayList(1);
   const rows = eisenRows(doc, plan);
   const W = COLS.reduce((s, c) => s + c[1], 0);
-  let y = 0;
-  // Titel
-  rect(dl, 0, -14, W, 0, bold);
-  dl.text({ x: 2, y: -4.5 }, part === 'special' ? 'Liste Spezialbewehrung (Schraubbewehrung)' : 'Betonstahlliste (Eisenliste nach SSHV)', { size: 3.5, bold: true, va: 'middle' });
   const pi = projectInfo(doc);
-  dl.text({ x: 2, y: -10 }, [plan ? `Plan ${plan}` : 'alle Pläne', planTitle(doc, plan ?? ''), pi?.number ? 'Projekt-Nr. ' + pi.number : ''].filter(Boolean).join(' · '), { size: 2, va: 'middle' });
-  dl.text({ x: W - 2, y: -10 }, normLine(doc).split(' · ').slice(0, 2).join(' · '), { size: 1.6, ha: 'right', va: 'middle' });
-  y = -14;
-  const section = (list: EisenRow[], title?: string) => {
-    if (title) { rect(dl, 0, y - 6, W, y, mid); dl.text({ x: 2, y: y - 3 }, title, { size: 2.5, bold: true, va: 'middle' }); y -= 6; }
+  const head = (dl: DisplayList, cont: boolean) => {
+    rect(dl, 0, -14, W, 0, bold);
+    dl.text({ x: 2, y: -4.5 }, (part === 'special' ? 'Liste Spezialbewehrung (Schraubbewehrung)' : 'Betonstahlliste (Eisenliste nach SSHV)') + (cont ? ' – Fortsetzung' : ''), { size: 3.5, bold: true, va: 'middle' });
+    dl.text({ x: 2, y: -10 }, [plan ? `Plan ${plan}` : 'alle Pläne', planTitle(doc, plan ?? ''), pi?.number ? 'Projekt-Nr. ' + pi.number : ''].filter(Boolean).join(' · '), { size: 2, va: 'middle' });
+    dl.text({ x: W - 2, y: -10 }, normLine(doc).split(' · ').slice(0, 2).join(' · '), { size: 1.6, ha: 'right', va: 'middle' });
+  };
+  const colHead = (dl: DisplayList, y: number) => {
     rect(dl, 0, y - 6, W, y, mid, '#e6e6e6');
     let x = 0;
     for (const [t, w] of COLS) { dl.text({ x: x + 1, y: y - 3 }, t, { size: 2.2, bold: true, va: 'middle' }); x += w; }
-    y -= 6;
-    for (const r of list) {
-      const rh = r.fix ? 9 : 17;
-      rect(dl, 0, y - rh, W, y);
-      const vals = [String(r.pos), String(r.n), String(r.dia), m2(r.len), m2(r.total)];
-      x = 0;
-      COLS.forEach(([, w], i) => {
-        if (i < 5) dl.text({ x: x + w - 1.5, y: y - rh / 2 }, vals[i], { size: 2.5, ha: 'right', va: 'middle', bold: i === 0 });
-        if (i < COLS.length - 1) dl.line({ x: x + w, y }, { x: x + w, y: y - rh }, thin, { ns: true });
-        x += w;
-      });
-      const fx = COLS.slice(0, 5).reduce((s, c) => s + c[1], 0), fw = COLS[5][1];
-      dl.text({ x: fx + 1, y: y - 0.8 }, r.fig.nr ? 'Form ' + r.fig.nr : 'Sonderform', { size: 1.7, va: 'top', color: '#707070' });
-      drawFigure(dl, r.fig, fx, y - rh, fw, rh - 1.5);
-      const rem = [...r.remarks, ...r.warn.map((w2) => '⚠ ' + w2)];
-      const bx = fx + fw + 1, bw = COLS[6][1] - 2;
-      let ty = y - 1;
-      for (const line of rem.slice(0, Math.floor(rh / 2.1))) {
-        let s = line; while (s.length > 3 && textWidth(s, 1.75) > bw) s = s.slice(0, -2);
-        dl.text({ x: bx, y: ty }, s === line ? s : s + '…', { size: 1.75, va: 'top' }); ty -= 2.1;
-      }
-      y -= rh;
+  };
+  const drawRow = (dl: DisplayList, r: EisenRow, y: number) => {
+    const rh = r.fix ? 9 : 17;
+    rect(dl, 0, y - rh, W, y);
+    const vals = [String(r.pos), String(r.n), String(r.dia), m2(r.len), m2(r.total)];
+    let x = 0;
+    COLS.forEach(([, w], i) => {
+      if (i < 5) dl.text({ x: x + w - 1.5, y: y - rh / 2 }, vals[i], { size: 2.5, ha: 'right', va: 'middle', bold: i === 0 });
+      if (i < COLS.length - 1) dl.line({ x: x + w, y }, { x: x + w, y: y - rh }, thin, { ns: true });
+      x += w;
+    });
+    const fx = COLS.slice(0, 5).reduce((s, c) => s + c[1], 0), fw = COLS[5][1];
+    dl.text({ x: fx + 1, y: y - 0.8 }, r.fig.nr ? 'Form ' + r.fig.nr : 'Sonderform', { size: 1.7, va: 'top', color: '#707070' });
+    drawFigure(dl, r.fig, fx, y - rh, fw, rh - 1.5);
+    const rem = [...r.remarks, ...r.warn.map((w2) => '⚠ ' + w2)];
+    const bx = fx + fw + 1, bw = COLS[6][1] - 2;
+    let ty = y - 1;
+    for (const line of rem.slice(0, Math.floor(rh / 2.1))) {
+      let s = line; while (s.length > 3 && textWidth(s, 1.75) > bw) s = s.slice(0, -2);
+      dl.text({ x: bx, y: ty }, s === line ? s : s + '…', { size: 1.75, va: 'top' }); ty -= 2.1;
     }
-    if (!list.length) { rect(dl, 0, y - 7, W, y); dl.text({ x: 2, y: y - 3.5 }, 'Keine Positionen', { size: 2.5, va: 'middle', color: '#707070' }); y -= 7; }
+  };
+  const items: ElItem[] = [];
+  const section = (list: EisenRow[], sec: 'normal' | 'special', title?: string) => {
+    if (title) items.push({ h: 6, keep: true, draw: (dl, y) => { rect(dl, 0, y - 6, W, y, mid); dl.text({ x: 2, y: y - 3 }, title, { size: 2.5, bold: true, va: 'middle' }); } });
+    items.push({ h: 6, keep: true, draw: colHead });
+    for (const r of list) items.push({ h: r.fix ? 9 : 17, sec, row: r, draw: (dl, y) => drawRow(dl, r, y) });
+    if (!list.length) items.push({ h: 7, draw: (dl, y) => { rect(dl, 0, y - 7, W, y); dl.text({ x: 2, y: y - 3.5 }, 'Keine Positionen', { size: 2.5, va: 'middle', color: '#707070' }); } });
   };
   const normal = rows.filter((r) => !r.special), special = rows.filter((r) => r.special);
-  if (part !== 'special') section(normal);
-  if (part !== 'normal' && special.length) section(special, part === 'special' ? undefined : 'Spezialbewehrung (Schraubbewehrung, SSHV-RL 4.2.3)');
-  // Zusammenfassung je Ø
+  if (part !== 'special') section(normal, 'normal');
+  if (part !== 'normal' && special.length) section(special, 'special', part === 'special' ? undefined : 'Spezialbewehrung (Schraubbewehrung, SSHV-RL 4.2.3)');
+  // Zusammenfassung je Ø (nur am Ende der Liste)
   if (d.summary !== false && part !== 'special') {
     const z = eisenSummary(rows);
-    y -= 4;
-    const sc: [string, number][] = [['Ø mm', 16], ['kg/m', 18], ['Fix/Lager L [m]', 28], ['Fix/Lager [kg]', 28], ['bearbeitet L [m]', 28], ['bearbeitet [kg]', 28], ['Total [kg]', 26]];
-    dl.text({ x: 0, y: y - 2.5 }, 'Zusammenfassung (B500B)', { size: 2.8, bold: true, va: 'middle' });
-    y -= 5;
-    rect(dl, 0, y - 5.5, sc.reduce((s, c) => s + c[1], 0), y, mid, '#e6e6e6');
-    let x = 0; for (const [t, w] of sc) { dl.text({ x: x + 1, y: y - 2.75 }, t, { size: 2, bold: true, va: 'middle' }); x += w; }
-    y -= 5.5;
-    const line = (vals: string[], b = false) => {
-      rect(dl, 0, y - 5, sc.reduce((s, c) => s + c[1], 0), y, b ? mid : thin);
-      let xx = 0; vals.forEach((v, i) => { if (v) dl.text({ x: xx + sc[i][1] - 1.2, y: y - 2.5 }, v, { size: 2.2, ha: 'right', va: 'middle', bold: b }); xx += sc[i][1]; });
+    items.push({ h: 21.5 + 5 * (z.perDia.length + 1), draw: (dl, y) => {
+      y -= 4;
+      const sc: [string, number][] = [['Ø mm', 16], ['kg/m', 18], ['Fix/Lager L [m]', 28], ['Fix/Lager [kg]', 28], ['bearbeitet L [m]', 28], ['bearbeitet [kg]', 28], ['Total [kg]', 26]];
+      const SW = sc.reduce((s, c) => s + c[1], 0);
+      dl.text({ x: 0, y: y - 2.5 }, 'Zusammenfassung (B500B)', { size: 2.8, bold: true, va: 'middle' });
       y -= 5;
-    };
-    for (const p of z.perDia) line([String(p.dia), p.kgm.toFixed(3), m2(p.fixLen), p.fixKg.toFixed(1), m2(p.bLen), p.bKg.toFixed(1), (p.fixKg + p.bKg).toFixed(1)]);
-    line(['Total', '', m2(z.fixLen), z.fixKg.toFixed(1), m2(z.bLen), z.bKg.toFixed(1), z.kg.toFixed(1)], true);
-    y -= 2;
-    dl.text({ x: 0, y: y - 2.5 }, `Anzahl Positionen: ${z.count}   Gesamtgewicht: ${z.kg.toFixed(1)} kg${z.special.count ? `   Spezialbewehrung: ${z.special.count} Pos., ${z.special.kg.toFixed(1)} kg` : ''}`, { size: 2.5, bold: true, va: 'middle' });
+      rect(dl, 0, y - 5.5, SW, y, mid, '#e6e6e6');
+      let x = 0; for (const [t, w] of sc) { dl.text({ x: x + 1, y: y - 2.75 }, t, { size: 2, bold: true, va: 'middle' }); x += w; }
+      y -= 5.5;
+      const line = (vals: string[], b = false) => {
+        rect(dl, 0, y - 5, SW, y, b ? mid : thin);
+        let xx = 0; vals.forEach((v, i) => { if (v) dl.text({ x: xx + sc[i][1] - 1.2, y: y - 2.5 }, v, { size: 2.2, ha: 'right', va: 'middle', bold: b }); xx += sc[i][1]; });
+        y -= 5;
+      };
+      for (const p of z.perDia) line([String(p.dia), p.kgm.toFixed(3), m2(p.fixLen), p.fixKg.toFixed(1), m2(p.bLen), p.bKg.toFixed(1), (p.fixKg + p.bKg).toFixed(1)]);
+      line(['Total', '', m2(z.fixLen), z.fixKg.toFixed(1), m2(z.bLen), z.bKg.toFixed(1), z.kg.toFixed(1)], true);
+      y -= 2;
+      dl.text({ x: 0, y: y - 2.5 }, `Anzahl Positionen: ${z.count}   Gesamtgewicht: ${z.kg.toFixed(1)} kg${z.special.count ? `   Spezialbewehrung: ${z.special.count} Pos., ${z.special.kg.toFixed(1)} kg` : ''}`, { size: 2.5, bold: true, va: 'middle' });
+    } });
   }
   void kgNom;
+  return { W, items, head, colHead };
+}
+
+/** Liste als Display-Liste (Papier-mm, Ursprung oben links, y nach oben) */
+export function eisenlisteDL(doc: Doc, view: View): DisplayList {
+  const { items, head } = eisenParts(doc, view);
+  const dl = new DisplayList(1);
+  head(dl, false);
+  let y = -14;
+  for (const it of items) { it.draw(dl, y); y -= it.h; }
   return dl;
+}
+
+/** Übertrags-/Zwischentotalzeile: Gewicht in kg (nie Meter über verschiedene Ø) */
+const CARRY_H = 6;
+function carryRow(dl: DisplayList, W: number, y: number, label: string, kg: number, n: number, first: boolean): void {
+  rect(dl, 0, y - CARRY_H, W, y, first ? mid : thin, '#f2f2f2');
+  if (!first) dl.line({ x: 0, y: y - CARRY_H }, { x: W, y: y - CARRY_H }, mid, { ns: true });
+  dl.text({ x: 2, y: y - CARRY_H / 2 }, label, { size: 2.5, bold: true, italic: true, va: 'middle' });
+  const fx = COLS.slice(0, 5).reduce((s, c) => s + c[1], 0);
+  dl.text({ x: fx - 1.5, y: y - CARRY_H / 2 }, `${n} Pos.`, { size: 2.2, ha: 'right', va: 'middle', italic: true });
+  dl.text({ x: fx + COLS[5][1] - 1.5, y: y - CARRY_H / 2 }, `Gewicht ${kg.toFixed(1)} kg`, { size: 2.5, bold: true, ha: 'right', va: 'middle' });
+}
+
+/**
+ * Umbruch der Eisenliste in Abschnitte der Höhe ≤ maxH: Kopf in jedem Abschnitt, Kopfzeile und «Übertrag» (Gewicht kg)
+ * am Anfang eines fortgesetzten Abschnitts, «Übertrag» am Ende, optional Zwischentotal; Zusammenfassung nur im letzten.
+ */
+export function eisenlisteLayout(doc: Doc, view: View, sp: SchedSplit): SchedSeg[] {
+  const { W, items, head, colHead } = eisenParts(doc, view);
+  const sub = sp.subtotal ? CARRY_H : 0;
+  const segs = paginate(items.map((i) => i.h), items.map((i) => !!i.keep), sp.maxH, 14 + sub, 14 + 6 + sub, CARRY_H, CARRY_H);
+  // Abschnitte, in denen Positionen eines Listenteils stehen (Zwischentotal nur bei umbrochenen Teilen)
+  const spans = new Map<string, Set<number>>();
+  segs.forEach(([a, b], k) => { for (let i = a; i < b; i++) { const s = items[i].sec; if (s && items[i].row) (spans.get(s) ?? spans.set(s, new Set()).get(s)!).add(k); } });
+  type Run = { kg: number; pos: Set<string> };
+  const run = new Map<string, Run>();
+  return segs.map(([a, b], k) => {
+    const dl = new DisplayList(1);
+    head(dl, k > 0);
+    let y = -14;
+    const f = items[a];
+    if (k > 0 && f?.row && f.sec) {
+      colHead(dl, y); y -= 6;
+      const r = run.get(f.sec) ?? { kg: 0, pos: new Set() };
+      carryRow(dl, W, y, 'Übertrag', r.kg, r.pos.size, true); y -= CARRY_H;
+    }
+    const segRun = new Map<string, Run>();
+    for (let i = a; i < b; i++) {
+      const it = items[i];
+      it.draw(dl, y); y -= it.h;
+      if (!it.row || !it.sec) continue;
+      const s = it.sec;
+      for (const m of [run, segRun]) { const r = m.get(s) ?? { kg: 0, pos: new Set() }; r.kg += it.row.kg; r.pos.add(it.row.plan + '|' + it.row.pos); m.set(s, r); }
+      const next = items[i + 1];
+      if (next?.row && next.sec === s && i + 1 < b) continue; // Listenteil geht in diesem Abschnitt weiter
+      if (sub && (spans.get(s)?.size ?? 0) > 1) { const r = segRun.get(s)!; carryRow(dl, W, y, 'Zwischentotal', r.kg, r.pos.size, false); y -= CARRY_H; }
+      if (i + 1 === b && next?.row && next.sec === s) { const r = run.get(s)!; carryRow(dl, W, y, 'Übertrag', r.kg, r.pos.size, false); y -= CARRY_H; }
+    }
+    return { dl, w: W, h: -y };
+  });
 }
 
 // ------------------------------------------------------------ Sonderliste registrieren
@@ -244,6 +310,7 @@ const partOpts: [string, string][] = [['all', 'Liste + Spezialbewehrung'], ['nor
 registerScheduleKind('eisenliste', {
   label: 'Eisenliste (SSHV)',
   dl: eisenlisteDL,
+  layout: eisenlisteLayout,
   html: (doc, view) => `<style>${EISEN_CSS}</style>` + eisenlisteHtml(doc, { plan: typeof view.data?.plan === 'string' ? view.data.plan : undefined, cover: view.data?.part !== 'special' }),
   csv: (doc, view) => eisenlisteCsv(doc, typeof view.data?.plan === 'string' ? view.data.plan : undefined),
   count: (doc, view) => new Set(eisenRows(doc, typeof view.data?.plan === 'string' ? view.data.plan : undefined).map((r) => r.plan + '|' + r.pos)).size,

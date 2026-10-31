@@ -2,7 +2,7 @@
 import { app } from '../app';
 import type { Id } from '../core/doc';
 import { newId } from '../core/doc';
-import { View, levels, typesOf, TypeEl, VIEW_KIND_LABEL } from '../core/view';
+import { View, levels, typesOf, TypeEl, VIEW_KIND_LABEL, detachView, annoIn } from '../core/view';
 import { allBrowserSections, catDef, allCats, emitHook } from '../core/registry';
 import { h } from './shell';
 import { icon } from './icons';
@@ -33,10 +33,19 @@ interface Node { id: string; label: string; icon?: string; children?: Node[]; vi
 /** Wandabwicklungen (Tragwerk) sind Schnitte mit data.dev und stehen in einer eigenen Gruppe */
 const isDev = (v: View) => !!v.data?.dev;
 function viewNodes(kind: View['kind'], ic: string, dev = false): Node[] {
-  const vs = app.doc.all<View>('view').filter((v) => v.kind === kind && (kind !== 'section' || isDev(v) === dev));
+  const all = app.doc.all<View>('view').filter((v) => v.kind === kind && (kind !== 'section' || isDev(v) === dev));
   const lv = new Map(levels(app.doc).map((l, i) => [l.id, i]));
-  vs.sort((a, b) => (kind === 'plan' || kind === 'ceiling' ? (lv.get(a.levelId!) ?? 0) - (lv.get(b.levelId!) ?? 0) : 0) || a.name.localeCompare(b.name, 'de', { numeric: true }));
-  return vs.map((v) => ({ id: v.id, label: kind === 'sheet' ? `${v.sheetNo ?? ''} - ${v.name}` : v.name, icon: ic, viewId: v.id, draggable: true, menu: () => viewMenu(v) }));
+  const byName = (a: View, b: View) => a.name.localeCompare(b.name, 'de', { numeric: true });
+  all.sort((a, b) => (kind === 'plan' || kind === 'ceiling' ? (lv.get(a.levelId!) ?? 0) - (lv.get(b.levelId!) ?? 0) : 0) || byName(a, b));
+  // abhängige Ansichten unter ihrer Primäransicht
+  const ids = new Set(all.map((v) => v.id));
+  const deps = new Map<Id, View[]>();
+  for (const v of all) if (v.parentId && ids.has(v.parentId)) (deps.get(v.parentId) ?? deps.set(v.parentId, []).get(v.parentId)!).push(v);
+  const node = (v: View): Node => {
+    const ch = deps.get(v.id)?.sort(byName).map(node);
+    return { id: v.id, label: kind === 'sheet' ? `${v.sheetNo ?? ''} - ${v.name}` : v.name, icon: ic, viewId: v.id, draggable: true, menu: () => viewMenu(v), ...(ch?.length ? { children: ch } : {}) };
+  };
+  return all.filter((v) => !v.parentId || !ids.has(v.parentId)).map(node);
 }
 
 function viewMenu(v: View): ([string, () => void] | '-')[] {
@@ -48,6 +57,7 @@ function viewMenu(v: View): ([string, () => void] | '-')[] {
     items.push(['Duplizieren', () => duplicateView(v, false)]);
     items.push(['Mit Detaillierung duplizieren', () => duplicateView(v, true)]);
   }
+  emitHook('viewMenu', v, items); // Module ergänzen (z.B. «Abhängige Ansicht duplizieren», «Ansicht teilen»)
   items.push('-', ['Löschen', () => {
     if (!confirm(`Ansicht „${v.name}“ löschen?`)) return;
     app.doc.transaction('Ansicht löschen', () => app.doc.remove(v.id));
@@ -77,10 +87,11 @@ export function duplicateView(v: View, withDetail: boolean): Id {
     const names = new Set(doc.all<View>('view').map((x) => x.name));
     while (names.has(name)) name = `${v.name} - Kopie ${++n}`;
     copy.name = name;
+    detachView(copy, v); // Kopie einer abhängigen Ansicht ist unabhängig
     if (copy.data?.marker) copy.data = { ...copy.data, marker: copy.data.marker + "'" };
     doc.add(copy);
     nid = copy.id;
-    if (withDetail) for (const e of doc.all()) if (e.viewId === v.id && e.cat !== 'view') {
+    if (withDetail) for (const e of doc.all()) if (e.cat !== 'view' && annoIn(doc, e, v)) {
       const c = JSON.parse(JSON.stringify(e)); c.id = newId(e.cat.slice(0, 2)); c.viewId = copy.id; doc.add(c);
     }
   });
@@ -153,6 +164,9 @@ function render(): void {
     const isGroup = !!n.children;
     const row = h('div', { class: 'tree-node' + (n.viewId && n.viewId === activeId ? ' active' : '') + (selId === n.id ? ' sel' : '') });
     const tw = h('span', { class: 'tw' }, isGroup ? (closed.has(n.id) && !filter ? '▸' : '▾') : '');
+    const toggle = () => { closed.has(n.id) ? closed.delete(n.id) : closed.add(n.id); render(); };
+    // Ansicht mit abhängigen Ansichten: Pfeil klappt auf/zu, die Zeile wählt die Ansicht
+    if (isGroup && n.viewId) tw.onclick = (e) => { e.stopPropagation(); toggle(); };
     row.append(tw);
     if (n.icon) row.append(h('span', { class: 'ti', html: icon(n.icon, 14) }));
     row.append(h('span', {}, n.label));
@@ -162,7 +176,7 @@ function render(): void {
       row.ondragstart = (e) => { e.dataTransfer?.setData('text/openriss-view', n.viewId!); e.dataTransfer?.setData('text/plain', n.viewId!); };
     }
     row.onclick = () => {
-      if (isGroup) { closed.has(n.id) ? closed.delete(n.id) : closed.add(n.id); render(); return; }
+      if (isGroup && !n.viewId) { toggle(); return; }
       selId = n.id;
       if (n.viewId) setBrowserSel(n.viewId);
       render();
