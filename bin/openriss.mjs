@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // OpenRiss-Kommandozeile: Skripte gegen die Skript-API ausführen und Projekte exportieren.
 //   openriss build <skript.ts|js> [--out projekt.oriss] [--pdf [plansatz.pdf]] [--dxf [ordner]] [--svg [ordner]]
-//                  [--ifc [modell.ifc]] [--abs [ordner]] [--fit-elevations] [-- skript-argumente …]
+//                  [--ifc [modell.ifc]] [--ifc-disc struct,arch,mep,site] [--ifc-cats …] [--ifc-exclude …]
+//                  [--abs [ordner]] [--font "Familie=pfad.ttf[,fett.ttf]"] [--fit-elevations] [-- skript-argumente …]
 //   openriss export <projekt.oriss> [--pdf …] [--dxf …] [--svg …] [--ifc …]
 //   openriss check <elemente.json|projekt.oriss>     prüft Elemente (Feld- und Verweisfehler)
 // Im Skript: `import { createProject, addWall, … } from 'openriss'` (oder direkte Pfade nach src/…).
@@ -17,6 +18,8 @@ const API = join(ROOT, 'src', 'api.ts');
 function usage(code = 0) {
   console.log(`OpenRiss CLI
   openriss build <skript.ts> [--out projekt.oriss] [--pdf [datei.pdf]] [--dxf [ordner]] [--svg [ordner]] [--ifc [datei.ifc]] [--abs [ordner]] [--fit-elevations] [-- argumente]
+      IFC-Teilmodell: --ifc-disc struct|arch|mep|site[,…]  --ifc-cats wall,floor  --ifc-exclude room,component
+      PDF-Schrift:    --font "Arial Narrow=ArialNarrow.ttf[,ArialNarrowBold.ttf]"
   openriss export <projekt.oriss> [--pdf …] [--dxf …] [--svg …] [--ifc …]
   openriss check <elemente.json|projekt.oriss>`);
   process.exit(code);
@@ -41,6 +44,10 @@ for (let i = 0; i < flags.length; i++) {
   else if (f === '--ifc') opts.ifc = resolve(next ?? `${base}.ifc`);
   else if (f === '--abs') opts.abs = resolve(next ?? `${base}_abs`);
   else if (f === '--fit-elevations') { opts.fitElevations = true; if (next) i--; }
+  else if (f === '--ifc-disc') opts.ifcDisc = (next ?? '').split(',').filter(Boolean);
+  else if (f === '--ifc-cats') opts.ifcCats = (next ?? '').split(',').filter(Boolean);
+  else if (f === '--ifc-exclude') opts.ifcExclude = (next ?? '').split(',').filter(Boolean);
+  else if (f === '--font') { const m = (next ?? '').match(/^([^=]+)=(.+)$/); if (!m) { console.error('--font "Familie=pfad.ttf[,fett.ttf]"'); usage(1); } (opts.fonts ??= {})[m[1]] = m[2].split(',').map((p) => resolve(p)).join(','); }
   else { console.error(`Unbekannte Option: ${f}`); usage(1); }
 }
 

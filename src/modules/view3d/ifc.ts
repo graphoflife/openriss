@@ -87,11 +87,19 @@ export function disciplineOf(el: El, doc: Doc): Discipline {
   if (MEP_CATS.has(el.cat) || el.cat.startsWith('mep')) return 'mep';
   if (SITE_CATS.has(el.cat) || el.cat.startsWith('topo')) return 'site';
   if (STRUCT_CATS.has(el.cat)) return 'struct';
-  if (el.cat === 'wall' || el.cat === 'floor') return el.structural ? 'struct' : 'arch';
+  // Wände/Decken: «Tragwerk» gesetzt oder Kern aus Beton (z.B. Magerbeton, nicht tragende Betonwand)
+  if (el.cat === 'wall' || el.cat === 'floor') return el.structural || concreteCore(doc, el) ? 'struct' : 'arch';
   // Türen/Fenster füllen die Öffnungen ihrer Wand → gleicher Fachbereich wie der Host
   if ((el.cat === 'door' || el.cat === 'window') && el.hostId) { const h = doc.get(el.hostId); if (h) return disciplineOf(h, doc); }
   // gehostete Elemente (Einlagen in Fugen, Bewehrung …) folgen ihrem Host, wenn nichts anderes gilt
   return 'arch';
+}
+
+const CONCRETE_PATTERNS = new Set(['concrete', 'rc']);
+function concreteCore(doc: Doc, el: El): boolean {
+  const layers: { mat?: Id; core?: boolean; fn?: string }[] = (doc.get<TypeEl>(el.typeId) as any)?.layers ?? [];
+  const core = layers.filter((l) => l.core || l.fn === 'structure');
+  return core.length > 0 && core.every((l) => { const m = doc.get<Material>(l.mat); return !!m && (CONCRETE_PATTERNS.has(m.cutPattern ?? '') || /^m_(beton|stb|mb)/.test(m.id)); });
 }
 
 /** Teilmodell: Fachbereiche und/oder Kategorien ein-/ausschließen */
@@ -384,6 +392,13 @@ export function exportIfc(doc: Doc, fileName = 'Projekt.ifc', nowOrOpts: Date | 
   count += rb.bars;
 
   // ---------------------------------------------------------- Beziehungen
+  // Einlagen in Arbeitsfugen (Fugenblech): Bezug Fuge → Einlage
+  for (const e of doc.all('embed')) {
+    const host = e.hostId ? doc.get(e.hostId) : undefined;
+    if (host?.cat !== 'joint') continue;
+    const a = prod.get(host.id), b = prod.get(e.id);
+    if (a && b) o.add(`IFCRELCONNECTSELEMENTS(${guid('conn:' + host.id + ':' + e.id)},${OH},'Fugenblech',$,$,${ref(a.ent)},${ref(b.ent)})`);
+  }
   for (const f of fills) {
     const p = prod.get(f.el);
     if (p) o.add(`IFCRELFILLSELEMENT(${guid('fills:' + f.el)},${OH},$,$,${ref(f.opening)},${ref(p.ent)})`);

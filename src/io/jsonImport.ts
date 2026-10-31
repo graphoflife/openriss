@@ -70,8 +70,24 @@ export function validate(els: El[], d: Doc): ImportError[] {
 
 const firstType = (doc: Doc, of: string) => doc.all<any>('type').find((t) => t.of === of)?.id;
 
+/**
+ * Element mit schon vorhandener ID: Materialien und Typen werden zusammengeführt (Vorlagenwerte wie Druckkennwerte
+ * einer Dämmung bleiben erhalten, nur angegebene Felder ändern), andere Elemente ersetzt – jeweils mit Warnung.
+ * `replace: true` ersetzt auch Materialien/Typen vollständig.
+ */
+export function mergeExisting(doc: Doc, e: El, replace = false): { el: El; warning?: string } {
+  const old = doc.get(e.id); if (!old) return { el: e };
+  if (old.cat !== e.cat) return { el: e, warning: `${e.id}: ${old.cat} durch ${e.cat} ersetzt` };
+  if (!replace && (e.cat === 'material' || e.cat === 'type')) {
+    const kept = Object.keys(old).filter((k) => !(k in e) && !['id', 'cat'].includes(k));
+    return { el: { ...old, ...e }, warning: `${e.cat === 'material' ? 'Material' : 'Typ'} „${e.id}“ existiert bereits (Vorlage) – zusammengeführt${kept.length ? ', vorhandene Werte bleiben: ' + kept.slice(0, 6).join(', ') + (kept.length > 6 ? ' …' : '') : ''} (replace: true ersetzt)` };
+  }
+  return { el: e, warning: `${catDef(e.cat)?.label ?? (e.cat === 'material' ? 'Material' : e.cat === 'type' ? 'Typ' : e.cat)} „${e.id}“ existiert bereits – ersetzt` };
+}
+
 /** Elementliste prüfen und importieren (replace: Projekt ersetzen, dryRun: nur prüfen) */
-export function importElements(doc: Doc, data: any, o: { replace?: boolean; dryRun?: boolean } = {}): { added: number; errors: ImportError[] } {
+export function importElements(doc: Doc, data: any, o: { replace?: boolean; dryRun?: boolean } = {}): { added: number; errors: ImportError[]; warnings: string[] } {
+  const warnings: string[] = [];
   const els = normalizeImport(data);
   for (const e of els) {
     if (!e.id) e.id = newId(String(e.cat ?? 'el').slice(0, 2));
@@ -79,14 +95,16 @@ export function importElements(doc: Doc, data: any, o: { replace?: boolean; dryR
   }
   if (o.replace) {
     const errs = validate(els, new Doc());
-    if (errs.length || o.dryRun) return { added: 0, errors: errs };
+    if (errs.length || o.dryRun) return { added: 0, errors: errs, warnings };
     loadData({ elements: els });
-    return { added: els.length, errors: [] };
+    return { added: els.length, errors: [], warnings };
   }
   const errors = validate(els, doc);
-  if (errors.length || o.dryRun) return { added: 0, errors };
-  doc.transaction('Projekt aus JSON', () => { for (const e of els) doc.add(e); });
-  return { added: els.length, errors: [] };
+  const merged = els.map((e) => { const r = mergeExisting(doc, e); if (r.warning) warnings.push(r.warning); return r.el; });
+  if (errors.length || o.dryRun) return { added: 0, errors, warnings };
+  doc.transaction('Projekt aus JSON', () => { for (const e of merged) doc.add(e); });
+  for (const w of warnings) console.warn(w);
+  return { added: els.length, errors: [], warnings };
 }
 
 const SECTION_CAT: Record<string, string> = {

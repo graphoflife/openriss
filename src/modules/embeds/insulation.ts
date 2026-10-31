@@ -93,7 +93,7 @@ function zoneProps(): PropDef[] {
     { key: 'vol', label: 'Volumen', group: g.dims, type: 'readonly', get: (e, doc) => fmtM3(multiArea(zoneArea(doc, e)) * zoneThick(doc, e)) },
     ...MAT_KEYS.slice(0, 3).map(([k, label]): PropDef => ({ key: 'm_' + k, label, group: 'Kennwerte (Material)', type: 'readonly', get: (e, doc) => kpa(zoneMat(doc, e)?.[k] as number | undefined) })),
     { key: 'sigmaMax', label: 'Pressung max. (Datei) [kPa]', group: 'Nachweis', type: 'readonly', get: (e, doc) => { const r = zoneCheck(doc, e); return r ? `${kpa(r.qs)} / ${kpa(r.d)}` : '–'; } },
-    { key: 'eta', label: 'Ausnutzung η', group: 'Nachweis', type: 'readonly', get: (e, doc) => { const r = zoneCheck(doc, e); return r ? r.eta.toFixed(2) : '–'; } },
+    { key: 'eta', label: 'Ausnutzung η', group: 'Nachweis', type: 'readonly', get: (e, doc) => { const r = zoneCheck(doc, e); return !r ? '–' : r.missing ? `⚠ Kennwerte fehlen (${r.missing.join(', ')})` : r.eta.toFixed(2); } },
     { key: 'mark', label: 'Kennzeichen', group: g.identity, type: 'text', get: (e) => e.mark ?? '', set: (_e, v) => ({ mark: v }) },
     { key: 'comments', label: 'Kommentare', group: g.identity, type: 'text', get: (e) => e.comments ?? '', set: (_e, v) => ({ comments: v }) },
   ];
@@ -147,7 +147,7 @@ registerCategory({
     { key: 'volume', label: 'Volumen', unit: 'vol', get: (el, doc) => multiArea(zoneArea(doc, el)) * zoneThick(doc, el) },
     { key: 'sigmaC', label: 'σc [kPa]', unit: 'num', get: (el, doc) => zoneMat(doc, el)?.sigmaC ?? '' },
     { key: 'fcd', label: 'f_cd [kPa]', unit: 'num', get: (el, doc) => zoneMat(doc, el)?.fcd ?? '' },
-    { key: 'eta', label: 'Ausnutzung η', unit: 'num', get: (el, doc) => { const r = zoneCheck(doc, el); return r ? Math.round(r.eta * 100) / 100 : ''; } },
+    { key: 'eta', label: 'Ausnutzung η', unit: 'num', get: (el, doc) => { const r = zoneCheck(doc, el); return r && !r.missing ? Math.round(r.eta * 100) / 100 : r?.missing ? 'Kennwerte fehlen' : ''; } },
   ],
 });
 
@@ -193,7 +193,7 @@ export function pressurePoints(m: El): number[][] {
 }
 
 /** Nachweis je Zone: grösste Pressung (quasi-ständig / Bemessung) und Ausnutzung η = max(σ_qs/σc, σ_d/f_cd) */
-export function zoneCheck(doc: Doc, zone: El): { qs: number; d: number; eta: number } | null {
+export function zoneCheck(doc: Doc, zone: El): { qs: number; d: number; eta: number; missing?: string[] } | null {
   return cached(doc, 'insulCheck', zone.id, () => {
     const maps = doc.all('pressureMap'); if (!maps.length) return null;
     const area = zoneArea(doc, zone); const m = zoneMat(doc, zone);
@@ -204,8 +204,14 @@ export function zoneCheck(doc: Doc, zone: El): { qs: number; d: number; eta: num
       qs = Math.max(qs, p[2]); if (p.length > 3) d = Math.max(d, p[3]);
     }
     if (!isFinite(qs)) return null;
-    const eta = Math.max(m?.sigmaC ? qs / m.sigmaC : 0, m?.fcd && isFinite(d) ? d / m.fcd : 0);
-    return { qs, d: isFinite(d) ? d : NaN, eta };
+    // fehlende Kennwerte nicht still als η = 0 werten (z.B. Material mit Vorlagen-ID im Skript neu angelegt)
+    const missing: string[] = [];
+    const sc = m?.sigmaC ?? 0, fcd = m?.fcd ?? 0;
+    if (!(sc > 0)) missing.push('σc');
+    if (isFinite(d) && !(fcd > 0)) missing.push('f_cd');
+    if (missing.length) console.warn(`Dämmzone ${zone.mark || zone.id}: Material ${m?.id ?? '?'} ohne Kennwerte ${missing.join(', ')} – kein Nachweis`);
+    const eta = missing.length ? NaN : Math.max(qs / sc, isFinite(d) ? d / fcd : 0);
+    return { qs, d: isFinite(d) ? d : NaN, eta, missing: missing.length ? missing : undefined };
   });
 }
 /** Zone unter einem Punkt (bei Überlappung: kleinste Fläche, z.B. F1 vor Randstreifen) */
@@ -311,7 +317,7 @@ function drawLegend(dl: DisplayList, el: El, doc: Doc, _view: View): void {
   dl.line({ x: p.x, y: y + 0.6 * s }, { x: p.x + 122 * s, y: y + 0.6 * s }, { w: 1, color: col });
   for (const z of zones) {
     const r = zoneCheck(doc, z); const m = zoneMat(doc, z); const t = zoneType(doc, z);
-    row([z.mark || z.comments || z.id, t?.product ?? t?.name ?? '', `${r ? kpa(r.qs) : '–'} / ${kpa(m?.sigmaC)}`, `${r && isFinite(r.d) ? kpa(r.d) : '–'} / ${kpa(m?.fcd)}`, r ? r.eta.toFixed(2) : '–']);
+    row([z.mark || z.comments || z.id, t?.product ?? t?.name ?? '', `${r ? kpa(r.qs) : '–'} / ${kpa(m?.sigmaC)}`, `${r && isFinite(r.d) ? kpa(r.d) : '–'} / ${kpa(m?.fcd)}`, !r ? '–' : r.missing ? 'Kennwerte fehlen' : r.eta.toFixed(2)]);
   }
 }
 registerCategory({

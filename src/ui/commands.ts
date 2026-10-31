@@ -159,7 +159,7 @@ async function importProjectJson(): Promise<void> {
     modal('Projekt aus JSON', body, [{ label: 'Schließen', primary: true, onClick: () => {} }], 720);
     return;
   }
-  const run = (replace: boolean) => { const r = importElements(app.doc, data, { replace }); app.refreshViews(); app.emit('views'); app.status(`${r.added} Element(e) importiert.`); };
+  const run = (replace: boolean) => { const r = importElements(app.doc, data, { replace }); app.refreshViews(); app.emit('views'); app.status(`${r.added} Element(e) importiert.` + (r.warnings.length ? ` ${r.warnings.length} Hinweis(e): ${r.warnings[0]}` : '')); };
   modal('Projekt aus JSON', body, [
     { label: 'Hinzufügen', primary: !full, onClick: () => run(false) },
     ...(full ? [{ label: 'Projekt ersetzen', primary: true, onClick: () => { if (!app.doc.dirty || confirm('Aktuelles Projekt ersetzen?')) run(true); } }] : []),

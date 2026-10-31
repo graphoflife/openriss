@@ -35,7 +35,7 @@ export type { Doc, El, Id, View, Level, V2 };
 // Prüfung und JSON-Import (gemeinsam mit der Oberfläche)
 export { validate, ApiError } from './io/jsonImport';
 export type { ImportError } from './io/jsonImport';
-import { validate, ApiError, importElements } from './io/jsonImport';
+import { validate, ApiError, importElements, mergeExisting } from './io/jsonImport';
 
 // ------------------------------------------------------------ Projekt
 /** Neues Projekt aus der Vorlage */
@@ -60,13 +60,23 @@ export function transaction<T>(name: string, fn: () => T): T { return doc.transa
 
 const firstType = (of: string): Id | undefined => doc.all<any>('type').find((t) => t.of === of)?.id;
 
-/** Element prüfen und hinzufügen (ID wird bei Bedarf erzeugt, Standardtyp ergänzt). Wirft ApiError. */
-export function add<T extends El = El>(el: Partial<T> & { cat: string }): T {
-  const e = { ...el } as any;
+/** Warnungen der API (z.B. vorhandene Vorlagen-ID zusammengeführt); werden auch auf der Konsole ausgegeben */
+export const warnings: string[] = [];
+
+/**
+ * Element prüfen und hinzufügen (ID wird bei Bedarf erzeugt, Standardtyp ergänzt). Wirft ApiError.
+ * Gibt es die ID schon (z.B. Vorlagenmaterial `m_xps500`), werden Materialien/Typen zusammengeführt (Kennwerte der
+ * Vorlage bleiben), andere Elemente ersetzt – jeweils mit Warnung. `{ replace: true }` ersetzt vollständig.
+ */
+export function add<T extends El = El>(el: Partial<T> & { cat: string }, o: { replace?: boolean } = {}): T {
+  let e = { ...el } as any;
   if (!e.id) e.id = newId(e.cat.slice(0, 2));
   if (catDef(e.cat)?.hasTypes && !e.typeId) e.typeId = firstType(e.cat);
   const errs = validate([e], doc);
   if (errs.length) throw new ApiError(errs);
+  const m = mergeExisting(doc, e, o.replace);
+  if (m.warning) { warnings.push(m.warning); console.warn('OpenRiss: ' + m.warning); }
+  e = m.el;
   return doc.transaction('API: ' + e.cat, () => doc.add(e)) as T;
 }
 
@@ -169,7 +179,13 @@ export function exportIfc(fileName: string | IfcOptions = 'Projekt.ifc', opts: I
 }
 
 // ------------------------------------------------------------ CLI-Abschluss (Export nach dem Skript)
-export interface CliOptions { cwd?: string; out?: string; pdf?: string; dxf?: string; svg?: string; ifc?: string; abs?: string; fitElevations?: boolean }
+export interface CliOptions {
+  cwd?: string; out?: string; pdf?: string; dxf?: string; svg?: string; ifc?: string; abs?: string; fitElevations?: boolean;
+  /** IFC-Teilmodell: Fachbereiche, nur/ohne Kategorien */
+  ifcDisc?: string[]; ifcCats?: string[]; ifcExclude?: string[];
+  /** zusätzliche PDF-Schriften: Familie → TTF-Pfad (regular[,bold]) */
+  fonts?: Record<string, string>;
+}
 /** Wird von `openriss build/export` nach dem Skript aufgerufen und schreibt die gewünschten Dateien. */
 export async function finishCli(o: CliOptions): Promise<void> {
   const fs: any = await import('node:fs' as string);
@@ -189,7 +205,11 @@ export async function finishCli(o: CliOptions): Promise<void> {
     console.log(`DXF: ${shs.length} Pläne → ${o.dxf}`);
   }
   if (o.pdf) { fs.writeFileSync(o.pdf, await exportPdf(shs.map((s) => s.id))); console.log(`PDF: ${shs.length} Pläne → ${o.pdf}`); }
-  if (o.ifc) { fs.writeFileSync(o.ifc, exportIfc(path.basename(o.ifc))); console.log(`IFC: ${o.ifc}`); }
+  if (o.ifc) {
+    const io: IfcOptions = { disciplines: o.ifcDisc as any, cats: o.ifcCats, excludeCats: o.ifcExclude };
+    fs.writeFileSync(o.ifc, exportIfc(path.basename(o.ifc), io));
+    console.log(`IFC: ${o.ifc}${o.ifcDisc?.length ? ' (' + o.ifcDisc.join(', ') + ')' : ''}`);
+  }
   if (o.abs) {
     fs.mkdirSync(o.abs, { recursive: true });
     const files = absFilesOf(doc);
@@ -212,13 +232,33 @@ export function applyLocale(loc: 'DE' | 'CH', o: { retype?: boolean; elev00?: nu
 /** Revision zu einem Plan hinzufügen (Index wird fortgezählt) */
 export const addRevision = (sheetId: Id, r: { text: string; by?: string; date?: string; index?: string }) => addRevisionTo(doc, sheetId, r);
 
+/** Funktion mit Änderungen: öffnet selbst eine Transaktion, wenn das Skript keine offen hat (verschachtelt erlaubt) */
+const tx = <F extends (...a: any[]) => any>(name: string, fn: F): F => ((...a: any[]) => doc.transaction('API: ' + name, () => fn(...a))) as F;
+
 // ------------------------------------------------------------ Bewehrung nach Schweizer Usanz (SSHV/SIA)
-export { absExport, absFiles, renumberPlans, createRebarSchedule, createEisenliste, eisenlisteCsv } from './modules/structure/steel';
+import { renumberPlans as renumberPlans0, createRebarSchedule as createRebarSchedule0, createEisenliste as createEisenliste0 } from './modules/structure/steel';
+import { migrateRebarPlans as migrateRebarPlans0 } from './modules/structure/rebar/norm';
+export { absExport, absFiles, eisenlisteCsv } from './modules/structure/steel';
 export { stahllisteCsv } from './modules/structure/schedule';
-export { migrateRebarPlans, rebarPlans } from './modules/structure/rebar/norm';
+export { rebarPlans } from './modules/structure/rebar/norm';
+export const renumberPlans = tx('Positionen je Plan', renumberPlans0);
+export const createRebarSchedule = tx('Stahlliste', createRebarSchedule0);
+export const createEisenliste = tx('Eisenliste', createEisenliste0);
+export const migrateRebarPlans = tx('Bewehrungspläne', migrateRebarPlans0);
 
 // ------------------------------------------------------------ Gebäudetechnik (HLKSE)
-export {
-  addRunChain, addRiser, applySlope, addFixture, addCircuit, createMepPlans, createRunSchedules, tagRuns,
-  createSchemaView, addSchemaSym, addSchemaLine, autoHeatingSchema, findPenetrations, applyPenetrations, systems,
-} from './modules/mep';
+import * as mep from './modules/mep';
+export { findPenetrations, systems } from './modules/mep';
+export const addRunChain = tx('Leitung', mep.addRunChain);
+export const addRiser = tx('Steigleitung', mep.addRiser);
+export const applySlope = tx('Gefälle', mep.applySlope);
+export const addFixture = tx('Apparat', mep.addFixture);
+export const addCircuit = tx('Heizkreis', mep.addCircuit);
+export const createMepPlans = tx('HLKSE-Pläne', mep.createMepPlans);
+export const createRunSchedules = tx('HLKSE-Listen', mep.createRunSchedules);
+export const tagRuns = tx('Leitungen beschriften', mep.tagRuns);
+export const createSchemaView = tx('Prinzipschema', mep.createSchemaView);
+export const addSchemaSym = tx('Schemasymbol', mep.addSchemaSym);
+export const addSchemaLine = tx('Schemalinie', mep.addSchemaLine);
+export const autoHeatingSchema = tx('Heizungsschema', mep.autoHeatingSchema);
+export const applyPenetrations = tx('Durchbrüche', mep.applyPenetrations);

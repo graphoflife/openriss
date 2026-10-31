@@ -4,7 +4,8 @@
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
 import { V2, V3, add, sub, mul, perp, norm, dist, lerp, apply, Mat2, lineLine } from '../../core/geom';
-import { registerCategory, GROUPS, PropDef, PlanCtx, SectionCtx, Grip, catDef } from '../../core/registry';
+import { registerCategory, GROUPS, PropDef, PlanCtx, SectionCtx, Grip, catDef, Solid } from '../../core/registry';
+import { box3 } from '../../views/sectionEngine';
 import { isPlanLike, levelElev, View } from '../../core/view';
 import { hostedBy } from '../../core/cache';
 import type { DisplayList } from '../../render/displayList';
@@ -201,6 +202,58 @@ export function jointArea(doc: Doc, j: Joint): number {
   const F = wallFrame(doc, j.hostId); return F ? jointLength(doc, j) * F.wi.T : 0;
 }
 
+// ------------------------------------------------------------ IFC: dünne Scheibe in der Fugenebene, Lage, Etappen, Fugenblech
+const JT = 20; // Dicke der Fugenscheibe im IFC (mm)
+export function jointSolids(doc: Doc, j: Joint): Solid[] {
+  const P3 = (p: V2, z: number): V3 => ({ x: p.x, y: p.y, z });
+  const up = (h: number): V3 => ({ x: 0, y: 0, z: h });
+  const vec = (a: V2, b: V2): V3 => ({ x: b.x - a.x, y: b.y - a.y, z: 0 });
+  if (j.kind === 'slab') {
+    const sl = slabInfo(doc, doc.get(j.hostId)); const pts = j.pts ?? [];
+    if (!sl || pts.length < 2) return [];
+    const out: Solid[] = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1]; if (dist(a, b) < 1) continue;
+      const n = mul(perp(norm(sub(b, a))), JT / 2);
+      out.push({ faces: box3(P3(sub(a, n), sl.bot), vec(a, b), vec(sub(a, n), add(a, n)), up(sl.top - sl.bot)), mat: 'm_beton' });
+    }
+    return out;
+  }
+  const F = wallFrame(doc, j.hostId); if (!F) return [];
+  const T = F.wi.T;
+  if (j.kind === 'wallV') {
+    const t = j.t ?? 0;
+    const o = F.P(t - JT / 2, -T / 2);
+    return [{ faces: box3(P3(o, F.wi.z0), vec(o, F.P(t + JT / 2, -T / 2)), vec(o, F.P(t - JT / 2, T / 2)), up(F.wi.z1 - F.wi.z0)), mat: 'm_beton' }];
+  }
+  const z = wallJointZ(doc, j); if (z === null) return [];
+  const [u0, u1] = wallJointRange(doc, j); if (u1 - u0 < 1) return [];
+  const z0 = Math.max(F.wi.z0, Math.min(F.wi.z1 - JT, z - JT / 2));
+  const o = F.P(u0, -T / 2);
+  return [{ faces: box3(P3(o, z0), vec(o, F.P(u1, -T / 2)), vec(o, F.P(u0, T / 2)), up(JT)), mat: 'm_beton' }];
+}
+export function jointIfc(doc: Doc, j: Joint) {
+  const ws = hostedBy(doc, j.id).filter((e) => e.cat === 'embed');
+  const host = doc.get(j.hostId);
+  const line = jointPlanLine(doc, j);
+  const ps: Record<string, string | number | boolean> = {
+    Art: KIND_LABELS.find((k) => k[0] === j.kind)?.[1] ?? '', Laenge_mm: Math.round(jointLength(doc, j)), Flaeche_m2: Math.round(jointArea(doc, j) / 1e4) / 100,
+    Bauteil: host ? host.mark || host.id : '', Fugenblech: ws.length > 0,
+  };
+  // Lage: Wandposition bzw. Höhe, Endpunkte der Fugenlinie (Modell-mm)
+  if (j.kind === 'wallV') ps.Lage = `u = ${fmtM(j.t ?? 0)} m ab Wandanfang`;
+  else if (j.kind === 'wallH') { const z = wallJointZ(doc, j); ps.Lage = (j.at === 'head' ? 'Wandkopf' : j.at === 'z' ? 'Höhe' : 'Wandfuss') + (z !== null ? ' ' + fmtKote(z) : ''); if (z !== null) ps.Z_mm = Math.round(z); }
+  else ps.Lage = 'in Platte';
+  if (line.length >= 2) { ps.X1_mm = Math.round(line[0].x); ps.Y1_mm = Math.round(line[0].y); ps.X2_mm = Math.round(line[line.length - 1].x); ps.Y2_mm = Math.round(line[line.length - 1].y); }
+  if (j.stageA) ps.EtappeA = j.stageA; if (j.stageB) ps.EtappeB = j.stageB;
+  if (ws.length) {
+    const e = ws[0]; const t = doc.get<any>(e.typeId);
+    ps.Fugenblech_Produkt = t?.product || t?.name || 'Fugenblech';
+    ps.Fugenblech_ID = e.mark || e.id;
+  }
+  return { entity: 'IfcBuildingElementProxy', predefined: 'USERDEFINED', name: jointTagText(doc, j), psets: { CH_Arbeitsfuge: ps } };
+}
+
 // ------------------------------------------------------------ Kategorie
 registerCategory({
   cat: 'joint', label: 'Arbeitsfuge', plural: 'Arbeitsfugen', planOrder: 70, hostCats: ['wall', 'floor', 'foundationSlab'],
@@ -209,12 +262,8 @@ registerCategory({
   center: (el, doc) => { const l = jointPlanLine(doc, el as Joint); return l.length ? polyMid(l).p : null; },
   tagPoint: (el, doc) => { const l = jointPlanLine(doc, el as Joint); return l.length ? polyMid(l).p : null; },
   tagText: (el, doc) => jointTagText(doc, el as Joint),
-  ifc: (el, doc) => {
-    const j = el as Joint;
-    const ps: Record<string, string | number | boolean> = { Art: KIND_LABELS.find((k) => k[0] === j.kind)?.[1] ?? '', Laenge_mm: Math.round(jointLength(doc, j)), Fugenblech: hostedBy(doc, j.id).some((e) => e.cat === 'embed') };
-    if (j.stageA) ps.EtappeA = j.stageA; if (j.stageB) ps.EtappeB = j.stageB;
-    return { entity: 'IfcBuildingElementProxy', predefined: 'USERDEFINED', name: jointTagText(doc, j), psets: { CH_Arbeitsfuge: ps } };
-  },
+  ifc: (el, doc) => jointIfc(doc, el as Joint),
+  ifcSolids: (el, doc) => jointSolids(doc, el as Joint),
   grips: (el, doc, view): Grip[] => {
     if (!isPlanLike(view)) return [];
     const j = el as Joint;
