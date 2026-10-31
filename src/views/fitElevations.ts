@@ -16,7 +16,8 @@ export function elevationsAtTemplate(doc: Doc): boolean {
 export function fitElevationsTo(doc: Doc, margin = 6000): void {
   const b = emptyBox();
   for (const e of doc.all()) {
-    if (e.viewId || e.cat === 'view' || e.cat === 'grid' || e.cat === 'level' || !catDef(e.cat)?.solids) continue;
+    // Gelände und Aushub (Grundstück) zählen nicht zur Gebäudeausdehnung
+    if (e.viewId || e.cat === 'view' || e.cat === 'grid' || e.cat === 'level' || !catDef(e.cat)?.solids || catDef(e.cat)?.ifcSite || e.cat === 'topo' || e.cat === 'excavation') continue;
     try { for (const s of solidsOf(doc, e)) for (const f of s.faces) for (const p of f.pts) extendBox(b, p); } catch { /* */ }
   }
   if (!boxValid(b)) return;

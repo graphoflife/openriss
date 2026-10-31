@@ -13,3 +13,4 @@ import './modules/output';
 import './modules/view3d';
 import './modules/sample';
 import './modules/embeds';
+import './modules/site';
