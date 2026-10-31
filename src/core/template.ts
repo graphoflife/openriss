@@ -70,6 +70,9 @@ export function newProject(doc: Doc): void {
     dt('dt_1760', 'Tür zweiflügelig 1760 x 2135', 1760, 2135, 'double');
     dt('dt_schiebe', 'Schiebetür 1010 x 2135', 1010, 2135, 'sliding');
     dt('dt_durchgang', 'Durchgang 1010 x 2135', 1010, 2135, 'opening');
+    dt('dt_rolltor', 'Rolltor 4500 x 2400', 4500, 2400, 'roll', { frame: 80, leafT: 60, mat: 'm_stahl' });
+    dt('dt_sektional', 'Sektionaltor 2500 x 2125', 2500, 2125, 'sectional', { frame: 80, leafT: 45, mat: 'm_stahl' });
+    dt('dt_lift', 'Lifttür Teleskop 900 x 2100', 900, 2100, 'lift', { frame: 60, leafT: 30, mat: 'm_stahl' });
 
     // Fenstertypen
     const ft = (id: string, name: string, width: number, height: number, sill: number, kind: string) =>

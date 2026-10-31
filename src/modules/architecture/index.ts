@@ -11,5 +11,6 @@ import './stair';
 import './railing';
 import './opening';
 import './component';
+import './elevator';
 import './template';
 export {};

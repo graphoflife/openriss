@@ -70,6 +70,17 @@ function tailFor(ent: string, pt: string, el: El, doc: Doc): string {
     const t = doc.get<TypeEl>(el.typeId) as any;
     const h = num(el.height ?? t?.height), w = num(el.width ?? t?.width);
     a[0] = h ? R(h) : '$'; a[1] = w ? R(w) : '$'; a[3] = '.NOTDEFINED.';
+    if (ent === 'IFCDOOR') {
+      // Bedienungsart nach Bauart und Anschlag
+      const left = !el.flipHand;
+      const op: Record<string, string> = {
+        single: left ? 'SINGLE_SWING_LEFT' : 'SINGLE_SWING_RIGHT', double: 'DOUBLE_DOOR_SINGLE_SWING', sliding: left ? 'SLIDING_TO_LEFT' : 'SLIDING_TO_RIGHT',
+        roll: 'ROLLINGUP', lift: left ? 'SLIDING_TO_LEFT' : 'SLIDING_TO_RIGHT', sectional: 'USERDEFINED',
+      };
+      const k = op[t?.kind ?? ''];
+      if (k) a[3] = '.' + k + '.';
+      if (t?.kind === 'sectional') a[4] = SS('SECTIONAL');
+    }
   }
   return ',' + a.join(',');
 }

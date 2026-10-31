@@ -11,7 +11,8 @@ import { DisplayList } from '../render/displayList';
 export interface DoorType extends TypeEl {
   of: 'door';
   width: number; height: number;
-  kind: 'single' | 'double' | 'sliding' | 'opening';
+  /** roll = Rolltor, sectional = Sektionaltor, lift = Lifttür (Teleskop-Schiebetür) */
+  kind: 'single' | 'double' | 'sliding' | 'opening' | 'roll' | 'sectional' | 'lift';
   frame: number;          // Zargenbreite
   leafT: number;          // Blattdicke
   mat?: Id;
@@ -89,6 +90,30 @@ function drawDoorPlan(ctx: PlanCtx, o: Opening): void {
     leaf(hu, L.hand > 0 ? 1 : -1, lw);
   } else if (kind === 'double') {
     leaf(L.u0 + fr, 1, lw / 2); leaf(L.u1 - fr, -1, lw / 2);
+  } else if (kind === 'roll' || kind === 'sectional') {
+    // Torblatt geschlossen an der Innenfläche, Führungsschienen; Rolltor: Wickelkasten, Sektionaltor: Laufschienen
+    // und geöffnetes Torblatt unter der Decke (gestrichelt, darüber)
+    const vi = vFace; const vo = vFace + side * lt;
+    dl.poly([P(L.u0 + fr, vi), P(L.u1 - fr, vi), P(L.u1 - fr, vo), P(L.u0 + fr, vo)], pen, true);
+    const rail = Math.min(100, fr + 40);
+    for (const [ua, ub] of [[L.u0, L.u0 + rail], [L.u1 - rail, L.u1]]) dl.poly([P(ua, vi), P(ub, vi), P(ub, vi + side * 80), P(ua, vi + side * 80)], thin, true);
+    const over = { w: 1, dash: 'hidden' as const };
+    if (kind === 'roll') {
+      const box = Math.max(250, Math.min(500, (t?.height ?? 2400) / 8));
+      dl.poly([P(L.u0, vi), P(L.u1, vi), P(L.u1, vi + side * box), P(L.u0, vi + side * box)], over, true, { ns: true });
+    } else {
+      const depth = (t?.height ?? 2125) + 500;
+      for (const u of [L.u0 + rail / 2, L.u1 - rail / 2]) dl.line(P(u, vi), P(u, vi + side * depth), over, { ns: true });
+      dl.poly([P(L.u0 + fr, vi + side * 300), P(L.u1 - fr, vi + side * 300), P(L.u1 - fr, vi + side * (depth - 100)), P(L.u0 + fr, vi + side * (depth - 100))], over, true, { ns: true });
+    }
+  } else if (kind === 'lift') {
+    // Teleskop-Schiebetür: zwei versetzte Blätter, beide zur Bandseite verschoben
+    const half = lw / 2; const v1 = vFace + side * 10, v2 = vFace + side * (lt + 20);
+    const s0 = L.hand > 0 ? L.u0 + fr : L.u1 - fr; const dir = L.hand > 0 ? 1 : -1;
+    for (const [v, k] of [[v1, 0], [v2, 1]] as [number, number][]) {
+      const a = s0 + dir * (k * half * 0.9), b = a + dir * (half + 20);
+      dl.poly([P(a, v), P(b, v), P(b, v + side * lt), P(a, v + side * lt)], pen, true);
+    }
   } else if (kind === 'sliding') {
     const v = vFace + side * (lt + 10);
     const du = L.hand > 0 ? 0 : 0;
@@ -215,6 +240,14 @@ function drawDoorSection(ctx: SectionCtx, o: Opening): void {
   const pen = { w: 1, dash: 'dash' as const };
   const q = (u: number, z: number) => ctx.toView({ ...L.P(u, 0), z });
   const ua = L.u0 + fr, ub = L.u1 - fr; const zb = z0 + t.height - fr;
+  if (t.kind === 'roll' || t.kind === 'sectional' || t.kind === 'lift') {
+    const thin = { w: 1 };
+    if (t.kind === 'lift') { const um = (ua + ub) / 2; ctx.dl.line(q(um, z0), q(um, zb), thin, { ns: true }); return; }
+    // Lamellen (Rolltor, ca. 100 mm) bzw. Paneele (Sektionaltor, ca. 500 mm)
+    const H = zb - z0; const n = t.kind === 'roll' ? Math.max(4, Math.round(H / 100)) : Math.max(3, Math.round(H / 530));
+    for (let i = 1; i < n; i++) { const z = z0 + (H * i) / n; ctx.dl.line(q(ua, z), q(ub, z), thin, { ns: true }); }
+    return;
+  }
   if (t.kind === 'double') {
     const um = (ua + ub) / 2;
     ctx.dl.poly([q(um, z0), q(ua, (z0 + zb) / 2), q(um, zb)], pen, false, { ns: true });
@@ -299,7 +332,7 @@ function openingTypeProps(isDoor: boolean): PropDef[] {
     { key: 'height', label: 'Höhe', group: g.dims, type: 'length', get: (t) => t.height, set: (_t, v) => ({ height: v }) },
     { key: 'frame', label: isDoor ? 'Zargenbreite' : 'Rahmenbreite', group: g.construction, type: 'length', get: (t) => t.frame, set: (_t, v) => ({ frame: v }) },
     { key: 'kind', label: 'Bauart', group: g.construction, type: 'select',
-      options: isDoor ? [['single', 'Einflügelig'], ['double', 'Zweiflügelig'], ['sliding', 'Schiebetür'], ['opening', 'Durchgang (ohne Blatt)']] : [['single', 'Einflügelig (Dreh-Kipp)'], ['double', 'Zweiflügelig'], ['triple', 'Dreiflügelig'], ['fixed', 'Festverglasung']],
+      options: isDoor ? [['single', 'Einflügelig'], ['double', 'Zweiflügelig'], ['sliding', 'Schiebetür'], ['roll', 'Rolltor'], ['sectional', 'Sektionaltor'], ['lift', 'Lifttür (Teleskop)'], ['opening', 'Durchgang (ohne Blatt)']] : [['single', 'Einflügelig (Dreh-Kipp)'], ['double', 'Zweiflügelig'], ['triple', 'Dreiflügelig'], ['fixed', 'Festverglasung']],
       get: (t) => t.kind, set: (_t, v) => ({ kind: v }) },
     { key: 'mat', label: isDoor ? 'Material Tür' : 'Material Rahmen', group: g.materials, type: 'material', get: (t) => t.mat ?? '', set: (_t, v) => ({ mat: v || undefined }) },
     { key: 'description', label: 'Beschreibung', group: g.identity, type: 'text', get: (t) => t.description ?? '', set: (_t, v) => ({ description: v }) },
