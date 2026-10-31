@@ -43,3 +43,14 @@ const ex = api.exportIfc({ excludeCats: ['joint'] });
 assert.ok(!ex.includes("'AF Etappe"), 'excludeCats');
 const only = api.exportIfc({ cats: ['wall'] });
 assert.ok(only.includes('IFCWALL(') && !only.includes('IFCSLAB('), 'cats');
+
+// N2 über die API: Gelände (Phase Bestand) und Aushub 10 × 6 m, 3 m tief, Böschung 1:1 → abH + (a+b)nH² + 4/3 n²H³
+{
+  const tp = api.addTopo({ pts: [{ x: -50000, y: -50000, z: 0 }, { x: 50000, y: -50000, z: 0 }, { x: 50000, y: 50000, z: 0 }, { x: -50000, y: 50000, z: 0 }] });
+  assert.equal(tp.phase, 'existing');
+  const ex = api.addExcavation({ pts: [{ x: 0, y: 0 }, { x: 10000, y: 0 }, { x: 10000, y: 6000 }, { x: 0, y: 6000 }], bottom: -3000, slope: 1 });
+  const v = api.excavationVolumes(ex.id)!;
+  const a = 10, b = 6, H = 3, n = 1;
+  const exact = (a * b * H + (a + b) * n * H * H + (4 / 3) * n * n * H ** 3) * 1e9;
+  assert.ok(Math.abs(v.cut - exact) / exact < 1e-3, `Aushub ${v.cut / 1e9} m³ ≠ ${exact / 1e9}`);
+}

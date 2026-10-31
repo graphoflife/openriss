@@ -35,6 +35,8 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `syncStairBearings(id?)` | Treppenlager (`stairBearing`) nach Änderung der Lagerfelder einer bzw. aller Treppen nachführen |
 | `addRebarTag(rebarId, viewId, off?)`, `tagOnPlace(ids, viewId)` | Beschriftungen |
 | `addPlanView`, `addSection`, `addSheet`, `placeView(sheetId, viewId, center, detail?, { segFrom?, segCount?, scaleBar? })`, `addSchedule` | Ansichten, Pläne, Listen (bei umbrochenen Listen: gezeigte Abschnitte; `scaleBar`: Massstabsleiste im Titel) |
+| `addTopo({ pts, contours?, breaklines?, boundary?, base?, … })`, `importTopoPoints(text, topoId?)` | Geländeoberfläche (TIN) aus Punkten/Höhenlinien bzw. aus Text/CSV («x y z» oder «Nr E N H» LV95) |
+| `addExcavation({ pts, bottom, slope?, work?, berm?, edges?, bottomSlope?, bottomProfile?, … })`, `excavationVolumes(id)` | Aushub/Baugrube; Kubaturen (mm³/mm²): `cut`, `backfill`, `building`, `bottomArea`, `slopeArea`, `bermArea`, `wallArea` |
 | `addRamp({ a, b, levelId, offset?, endLevelId?, endOffset?, width?, maxPct?, transPct?, transLen?, typeId?, walls?, wallTypeId?, wallTop? })` | Rampe als eine geneigte Platte mit Übergängen und Trogwänden (Vorgabe 6.00 m, max. 15 %, Übergänge 8 % auf 3 m); liefert `{ floor, walls, main }` |
 | `importVector(viewId, daten, { format?, scale?, origin?, page?, layers?, texts?, fills?, masks?, unit? })` | DXF, SVG oder PDF (Text oder Bytes) als bearbeitbare Detailelemente importieren: Linien mit Linienstilen nach Farbe/Strichart/Stärke (vorhandene werden wiederverwendet), Bögen, Füllbereiche (Typ je Farbe bzw. erkanntes OpenRiss-Muster), Texte (Typ nach Höhe/Farbe). `scale`: Papier-mm → Ansichts-mm (Standard: Massstab der Ansicht), `origin`: Lage der linken unteren Seitenecke, `page`: PDF-Seite; liefert Anzahlen `{ lines, arcs, regions, texts, lineStyles, types, skipped, layers, pages, ids }` |
 | `explodeCadImport(ids, { keepColors?, texts?, fills? })` | verknüpften DXF-Import auflösen |
@@ -164,6 +166,23 @@ Fläche und Umriss werden aus raumbegrenzenden Wänden und Raumtrennungen (`room
 | `coverUsed` | verwendete Betondeckung |
 
 Beschriftung `rebarTag`: `viewId`, `refId` (Bewehrung), `off`, `fmt`, `leader` – am einfachsten mit `addRebarTag`.
+
+### Gelände `topo` und Aushub `excavation` (Register «Grundstück»)
+- `topo`: `pts: {x,y,z}[]` (Messpunkte, mm im Modell; Import aus LV95 über `project.basePoint {E, N}` und `elev00`),
+  `contours?: { z, pts }[]` und `breaklines?: V3[][]` (Zwangskanten der TIN), `boundary?`, `base?` (Unterkante Erdkörper),
+  `contourStep` (500), `contourMajor` (2500), `labels`, `contoursInPit`, `planCut` (`'none'`/`'full'`: Erdreich im
+  Grundriss schneiden), `showPoints`, `phase: 'existing'` (gewachsenes Terrain; `addTopo` setzt das).
+  Darstellung: Höhenlinien (Hauptlinien beschriftet, m ü. M. mit `elev00`), Erdkörper im Schnitt mit Geländelinie
+  (automatisch, inkl. Verbau), gewachsenes Terrain gestrichelt, optional Hinterfüllung; in Ansichten der Phase Bestand
+  ohne Aushub. IFC: `IfcGeographicElement .TERRAIN.` im Grundstück (`IfcSite`), Dreiecksnetz.
+- `excavation`: `pts` (Sohlenkontur; mit `work` = Gebäudeumriss + Arbeitsraum), `bottom` (Sohle absolut, mm),
+  `bottomSlope?: { dir, pct, o? }` bzw. `bottomProfile?: { o?, dir, pts: { s, z }[] }` (z. B. Rampentrog), `slope` (Böschung
+  1:n, n = horizontal je 1 vertikal; Standard 1), `berm?: { dz, width }`, `edges?: { slope?, vertical? (Verbau), berm? }[]`
+  je Kante `pts[i] → pts[i+1]`, `topoId?`, `top?` (Terrainhöhe ohne Gelände), `backfill?` (Hinterfüllung im Schnitt).
+  Geometrie exakt (Böschungsebenen, Grate und Kehlen, Bermen, senkrechter Verbau, mehrere Gruben kombiniert).
+  Grundriss: Sohle, Böschungskrone, Böschungsschraffur, Bermen, «Böschung 1:n», Sohlenkote. Listenfelder Aushub,
+  Hinterfüllung, Flächen. IFC: `IfcGeographicElement .USERDEFINED.` «Aushub» (in IFC4 gibt es `IfcEarthworksCut` noch
+  nicht; erst IFC4x3) mit Pset `CH_Aushub` (Volumen_Aushub, Volumen_Hinterfuellung, Sohlenkote, Boeschung, Flächen).
 
 ### Linien, Linienstile, Texte, Symbole
 - Detail-/Modelllinie `line`: `a`, `b`, `arc?`, `style`; Bereich `region`: `loops`, `typeId`, `lineStyle`.

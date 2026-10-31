@@ -176,6 +176,19 @@ export const importVector = (viewId: Id, data: string | Uint8Array, opts: Vector
 /** verknüpfte DXF-Importe auflösen (Linienstile nach Farbe/Linientyp/Stärke, Texte, Füllungen) */
 export const explodeCadImport = (ids: Id[], o: Parameters<typeof explodeCad>[2] = {}) => doc.transaction('API: Import auflösen', () => explodeCad(doc, ids, o));
 
+// ------------------------------------------------------------ Gelände und Baugrube
+import * as site from './modules/site';
+export type { Topo, Excavation, ExcVolumes } from './modules/site';
+/** Geländeoberfläche aus Punkten (V3, mm) und Höhenlinien; Phase «Bestand» (gewachsenes Terrain) als Vorgabe */
+export const addTopo = (o: Partial<site.Topo> & { pts: { x: number; y: number; z: number }[] }) =>
+  add<site.Topo>({ name: 'Gelände', phase: 'existing', ...o, cat: 'topo' } as any);
+/** Aushub/Baugrube: Sohlenkontur `pts`, Sohle `bottom` (absolut), Böschung 1:`slope`, Arbeitsraum `work`, Bermen, Verbau je Kante */
+export const addExcavation = (o: Partial<site.Excavation> & { pts: V2[]; bottom: number }) => add<site.Excavation>({ slope: 1, ...o, cat: 'excavation' } as any);
+/** Kubaturen eines Aushubs (mm³/mm²): Aushub, Hinterfüllung, Bauwerk, Sohlen-/Böschungs-/Berm-/Verbauflächen */
+export const excavationVolumes = (id: Id) => { const el = doc.get(id); return el ? site.excavationVolumes(doc, el) : null; };
+/** Geländepunkte aus Text/CSV («x y z» bzw. «Nr E N H» in LV95) übernehmen – neues Gelände oder ergänzen */
+export const importTopoPoints = (text: string, topoId?: Id) => doc.transaction('API: Geländepunkte', () => site.applyPoints(doc, site.parsePoints(text, doc), topoId));
+
 // ------------------------------------------------------------ Rampen / geneigte Platten
 import { createRamp, RampSpec } from './modules/architecture/ramp';
 export type { RampSpec } from './modules/architecture/ramp';

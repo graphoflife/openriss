@@ -25,6 +25,12 @@ Tür, `DI` bemaßt, `MV` verschiebt.
   Raumtrennung, Wand- und Schachtöffnungen
 - Ebenen, Raster (automatische Bezeichnung), Referenzebenen, Modell- und Detaillinien
 
+**Gelände und Baugrube**
+- Geländeoberfläche aus Messpunkten, Höhenlinien und Bruchkanten (auch LV95-Import), Höhenlinien im Grundriss,
+  automatische Geländelinie in Schnitten
+- Aushub mit Sohle, Arbeitsraum, Böschungsneigung je Kante, Bermen und Verbau; Kubaturen (Aushub, Hinterfüllung),
+  Böschungsschraffur, IFC im Grundstück
+
 **Tragwerk und Bewehrung**
 - Tragwerksstützen, Träger, Einzel-/Streifenfundamente, Fundamentplatten
 - Stabbewehrung mit Biegeformen (gerade, Winkel, Steckbügel, Bügel, Haken), Verlegung nach Anzahl oder

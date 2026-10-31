@@ -62,7 +62,7 @@ export function validate(els: El[], d: Doc): ImportError[] {
       else if (t.cat !== 'type' || (t.of && t.of !== e.cat && !(def?.hasTypes === false))) err('typeId', `Typ „${e.typeId}“ gehört zu „${t.of}“, nicht zu „${e.cat}“`);
     }
     ref('attachTopId', ['roof', 'floor', 'foundationSlab']); ref('attachBaseId', ['floor', 'foundationSlab']);
-    if (e.slope !== undefined && e.slope !== null && !(isV2(e.slope.a) && ((isV2(e.slope.dir) && Array.isArray(e.slope.prof) && e.slope.prof.length >= 2 && e.slope.prof.every((q: any) => isNum(q?.s) && isNum(q?.dz))) || (isV2(e.slope.b) && isNum(e.slope.pct)))))
+    if ((e.cat === 'floor' || e.cat === 'foundationSlab') && e.slope !== undefined && e.slope !== null && !(isV2(e.slope.a) && ((isV2(e.slope.dir) && Array.isArray(e.slope.prof) && e.slope.prof.length >= 2 && e.slope.prof.every((q: any) => isNum(q?.s) && isNum(q?.dz))) || (isV2(e.slope.b) && isNum(e.slope.pct)))))
       err('slope', 'Gefälle { a, dir, prof: [{ s, dz }, …] } oder Neigungspfeil { a, b, pct } erwartet');
     if (e.cat === 'view' && e.kind === 'plan') ref('levelId', ['level']);
     if (e.cat === 'view') ref('parentId', ['view']);
