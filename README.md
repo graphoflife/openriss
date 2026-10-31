@@ -36,6 +36,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
   Beschriftung, Lagenfilter je Ansicht, Wandabwicklungen, Treppenbewehrung
 - Einlagen (Fugenblech, Rückbiegeanschluss, Muffenstab, Durchstanzbewehrung, Ankerschiene, Futterrohr,
   Einlegerohre), Arbeitsfugen und Etappen, Kernbohrungen, Dämmzonen mit Pressungen, Fertigteil-Lichtschacht
+- Treppenlager für Trittschall: Schalldämmlager am Antritt, Z-Lager (Konsole + Elastomer) und Querkraftdorne an
+  Decke und Podest, Podest auf Wandkonsole, Fugenplatten Lauf/Podest–Wand – in Schnitt, 3D, Liste und IFC
 
 **Gebäudetechnik (HLKSE)**
 - Heizung, Lüftung, Sanitär, Elektro: Rohre, Kanäle, Leerrohre mit Systemen und Gefälle, Apparate und

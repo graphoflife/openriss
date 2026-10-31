@@ -29,6 +29,7 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `add(el)` | beliebiges Element prüfen und hinzufügen (ID und Standardtyp werden ergänzt), wirft `ApiError` |
 | `validate(els, doc)`, `importJson(daten, { replace?, dryRun? })` | Elementlisten prüfen/importieren |
 | `addLevel`, `addGrid`, `addWall`, `addDoor`, `addWindow`, `addWallOpening`, `addFloor`, `addRoof`, `addColumn`, `addBeam`, `addStair`, `addRoom`, `addRebar` | Erzeuger mit sinnvollen Vorgaben |
+| `syncStairBearings(id?)` | Treppenlager (`stairBearing`) nach Änderung der Lagerfelder einer bzw. aller Treppen nachführen |
 | `addRebarTag(rebarId, viewId, off?)`, `tagOnPlace(ids, viewId)` | Beschriftungen |
 | `addPlanView`, `addSection`, `addSheet`, `placeView(sheetId, viewId, center)`, `addSchedule` | Ansichten, Pläne, Listen |
 | `fitElevations()` | Gebäudeansichten an das Modell anpassen |
@@ -83,6 +84,28 @@ Träger: `a`, `b`, `levelId`, `offA`, `offB`, `zJust` (`top`), `yOff`.
 ### Treppe `stair`
 `p0` (Antritt Mitte), `dir` (Laufrichtung), `levelId`, `baseOffset`, `topLevelId`, `topOffset`, `height`,
 `shape` (`straight`, `L`, `U`), `turn` (±1), `width`, `maxRiser`, `tread`, `landing`, `gap`, `risers` (0 = automatisch), `split`.
+
+**Trittschall / Lager** (nur Massivtreppen; ohne Angabe monolithisch):
+
+| Feld | Werte | Bedeutung |
+|---|---|---|
+| `jBot` | `mono`, `pad` | Antritt auf Decke/Bodenplatte: Schalldämmlager (Elastomer) unter dem Lauf |
+| `jTop` | `mono`, `z`, `dowel` | Austritt an der Decke: Z-Lager (Konsole + Elastomer-Z-Profil) oder Querkraftdorne mit Fugenplatte; die Decke wird über die Laufbreite ausgeklinkt |
+| `jLand` | `mono`, `z`, `dowel` | Lauf – Podest (beide Laufenden); das Podest wird ausgespart |
+| `jLandWall` | `mono`, `console`, `dowel` | Podest – Wand: Wandkonsole mit Elastomerlager oder Querkraftdorne |
+| `wallPlate` | `true` | Fugenplatten zwischen Lauf/Podest und angrenzenden Wänden (Lauf wird um die Fuge schmaler) |
+| `jGap`, `padT`, `consoleC` | mm | Fugenbreite (10), Lagerdicke (15), Konsolentiefe (120) |
+| `dowelN`, `dowelDia` | Stk., mm | Querkraftdorne je Fuge (2), Durchmesser (20) |
+| `prodZ`, `prodPad`, `prodDowel`, `prodPlate` | Text | Produktnamen für Beschriftung, Liste und IFC |
+
+Beim Z-Lager greift das Laufende um die Konsolentiefe in Podest bzw. Decke (Stufe auf deren Höhe), dahinter folgen
+Elastomer-Z-Profil und Konsole in halber Auflagerdicke. Die Lagerteile sind eigene Elemente `stairBearing`
+(`hostId` = Treppe, `key`, `kind` = `zBearing`, `pad`, `dowel`, `plate`, optional `product`): Grundriss gestrichelt,
+Schnitt und 3D, Bauteilliste (Art, Produkt, Lage, Anzahl, Länge, Dicke), Beschriftung, IFC als
+`IfcDiscreteAccessory` (Lager), `IfcMechanicalFastener .DOWEL.` und `IfcCovering .INSULATION.` (Fugenplatten) mit
+Pset `CH_Treppenlager`. `addStair` legt sie an; nach `update` der Lagerfelder `syncStairBearings(id?)` aufrufen
+(die CLI gleicht vor dem Export ab, in der Oberfläche geschieht es beim Ändern der Eigenschaft bzw. mit
+«Lager aktualisieren»).
 
 ### Raum `room`
 `name`, `number`, `pt` (Raumpunkt), `levelId`, `baseOffset`, `topLevelId`, `topOffset`, `floorFinish`, `wallFinish`, `ceilingFinish`.
