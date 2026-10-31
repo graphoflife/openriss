@@ -1,7 +1,8 @@
 // Bewehrung – Erzeugen eines Stabbewehrungssatzes aus Host-Treffer + Optionen: Biegeform in die
 // Schnittfläche einpassen (Deckung + Ø/2), Verteilung über die Bauteiltiefe, Plattenmodus im Grundriss.
 import type { Doc, El, Id } from '../../../core/doc';
-import { V2, V3, add, sub, mul, norm, perp, dot, dist } from '../../../core/geom';
+import { V2, V3, add, sub, mul, norm, perp, dot, dist, lineLine } from '../../../core/geom';
+import { surfaceOf } from '../../../views/surfaces';
 import { projectInfo } from '../../../core/view';
 import { hostedBy } from '../../../core/cache';
 import { Layout, fitShape, cleanRing, insetRing, chordThrough, inwardNormal, FitKind } from './math';
@@ -110,8 +111,16 @@ export function buildSlab(doc: Doc, hit: HostHit, click: V2, o: BuildOpts): Part
   const sh = single ? 0 : smin;
   const A = add(ch[0], mul(w, sh)), B = add(ch[1], mul(w, sh));
   const hn = V3Z(o.layer.startsWith('u') ? 1 : -1);
+  // geneigte Platte: Stäbe parallel zur Oberfläche (Knick an den Knicklinien), Verteilung mit der Neigung am Klickpunkt
+  const sf = surfaceOf(doc, hit.host); const sl = sf && !sf.flat ? sf : null;
+  const zOf = (q: V2) => (sl ? z + sl.topAt(q) - sl.topAt(click) : z);
+  const pts: V3[] = [{ ...A, z: zOf(A) }];
+  if (sl) for (const t of (sl.creases ?? []).map((cr) => lineLine(A, B, cr.a, cr.b)).filter((x) => x && x.t > 1e-4 && x.t < 1 - 1e-4).map((x) => x!.t).sort((m, n) => m - n)) {
+    const q = add(A, mul(sub(B, A), t)); pts.push({ ...q, z: zOf(q) });
+  }
+  pts.push({ ...B, z: zOf(B) });
   return {
-    ...base(hit, o, c), shape: '00', pts: [{ ...A, z }, { ...B, z }], dir: { x: w.x, y: w.y, z: 0 }, span: single ? 0 : smax - smin,
+    ...base(hit, o, c), shape: pts.length > 2 ? '99' : '00', pts, dir: { x: w.x, y: w.y, z: zOf(add(click, w)) - zOf(click) }, span: single ? 0 : smax - smin,
     hookA: o.hookA, hookB: o.hookB, hookNA: hn, hookNB: hn,
     fit: fitOf(planFrame(z), click, o, { slab: o.layer, orient: o.orient }),
   };
@@ -132,7 +141,9 @@ export function buildDrawn(doc: Doc, hit: HostHit, pts2: V2[], o: BuildOpts, sla
       span = Math.abs(s);
     }
     const hn = V3Z(o.layer.startsWith('u') ? 1 : -1);
-    return { ...base(hit, o, c), shape, pts: pts2.map((q) => ({ ...q, z })), dir: { x: w.x, y: w.y, z: 0 }, span, hookA: o.hookA, hookB: o.hookB, hookNA: hn, hookNB: hn };
+    const sf = surfaceOf(doc, hit.host); const sl = sf && !sf.flat ? sf : null; const c0 = pts2[0];
+    const zOf = (q: V2) => (sl ? z + sl.topAt(q) - sl.topAt(c0) : z);
+    return { ...base(hit, o, c), shape, pts: pts2.map((q) => ({ ...q, z: zOf(q) })), dir: { x: w.x, y: w.y, z: zOf(add(c0, w)) - zOf(c0) }, span, hookA: o.hookA, hookB: o.hookB, hookNA: hn, hookNB: hn };
   }
   let d0 = hit.dmin + c + d / 2;
   let span = hit.dmax - c - d / 2 - d0;

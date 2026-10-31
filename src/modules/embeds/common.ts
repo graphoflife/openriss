@@ -12,6 +12,7 @@ import { floorArea, floorTop } from '../architecture/floor';
 import { foundInfo } from '../structure/foundation';
 import { colInfo, Column } from '../structure/column';
 import { cached } from '../../core/cache';
+import { surfaceOf } from '../../views/surfaces';
 
 // ------------------------------------------------------------ Zahlen (Schweizer Usanz: Dezimalpunkt)
 /** Meter mit Punkt, z.B. 2400 → «2.40» */
@@ -55,32 +56,44 @@ export function wallFrame(doc: Doc, id: Id | undefined): WallFrame | null {
 }
 
 // ------------------------------------------------------------ Platten (Geschossdecke, Fundamentplatte)
-export interface SlabInfo { el: El; top: number; bot: number; area: MultiPoly; thick: number }
+export interface SlabInfo {
+  el: El; top: number; bot: number; area: MultiPoly; thick: number;
+  /** geneigte Platte: Höhenverschiebung von top/bot im Punkt p (eben: 0); top/bot = Nennhöhen am Bezugspunkt */
+  dz: (p: V2) => number; sloped: boolean;
+}
 const SLAB_CATS = ['floor', 'foundationSlab'];
 export function slabInfo(doc: Doc, el: El | undefined): SlabInfo | null {
   if (!el) return null;
   return cached(doc, 'embSlab', el.id, () => {
+    const surf = surfaceOf(doc, el);
+    const sloped = !!surf && !surf.flat;
     if (el.cat === 'floor') {
       const t = doc.get<any>(el.typeId);
       const layers: { t: number; fn: string }[] = t?.layers ?? [];
       const T = layers.reduce((s, l) => s + l.t, 0) || 200;
       // tragende Schichten (für Volumen/Lage der Einlagen)
-      let z = floorTop(doc, el); let top = z, bot = z - T; let found = false;
+      const z0 = floorTop(doc, el); let z = z0; let top = z, bot = z - T; let found = false;
       for (const l of layers) { if (l.fn === 'structure') { if (!found) { top = z; found = true; } bot = z - l.t; } z -= l.t; }
-      return { el, top, bot, area: floorArea(doc, el), thick: top - bot };
+      return { el, top, bot, area: floorArea(doc, el), thick: top - bot, sloped, dz: sloped ? (p: V2) => surf!.topAt(p) - z0 : () => 0 };
     }
     if (el.cat === 'foundationSlab') {
       const fi = foundInfo(doc, el); if (!fi) return null;
-      return { el, top: fi.z1, bot: fi.z0, area: fi.polys, thick: fi.z1 - fi.z0 };
+      return { el, top: fi.z1, bot: fi.z0, area: fi.polys, thick: fi.z1 - fi.z0, sloped, dz: sloped ? (p: V2) => surf!.topAt(p) - fi.z1 : () => 0 };
     }
     return null;
   });
 }
-/** Platte unter einem Grundrisspunkt; zNear: bevorzugt die Platte, deren Höhenlage am nächsten liegt */
+/** Plattenhöhen im Grundrisspunkt p (geneigte Platten: top/bot an dieser Stelle) */
+export function slabInfoAt(s: SlabInfo, p: V2): SlabInfo {
+  if (!s.sloped) return s;
+  const d = s.dz(p); return { ...s, top: s.top + d, bot: s.bot + d };
+}
+/** Platte unter einem Grundrisspunkt (Höhen an diesem Punkt); zNear: bevorzugt die Platte, deren Höhenlage am nächsten liegt */
 export function slabAt(doc: Doc, p: V2, zNear?: number, filter?: (s: SlabInfo) => boolean): SlabInfo | null {
   let best: SlabInfo | null = null; let bd = Infinity;
   for (const c of SLAB_CATS) for (const el of doc.all(c)) {
-    const s = slabInfo(doc, el); if (!s || !s.area.some((poly) => pointInPoly(p, poly))) continue;
+    const s0 = slabInfo(doc, el); if (!s0 || !s0.area.some((poly) => pointInPoly(p, poly))) continue;
+    const s = slabInfoAt(s0, p);
     if (filter && !filter(s)) continue;
     const d = zNear === undefined ? -s.top : zNear < s.bot ? s.bot - zNear : zNear > s.top ? zNear - s.top : 0;
     if (d < bd) { bd = d; best = s; }

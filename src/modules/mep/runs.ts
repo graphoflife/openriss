@@ -13,6 +13,7 @@ import type { Pen } from '../../render/styles';
 import { fmtLen, fmtNum } from '../../core/units';
 import { normTextAngle } from '../../elements/datums';
 import { floorArea, floorTop, floorThick } from '../architecture/floor';
+import { surfaceOf } from '../../views/surfaces';
 import { app } from '../../app';
 import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { LineDrawTool, PREVIEW, PREVIEW_THIN } from '../../tools/drawTool';
@@ -107,7 +108,8 @@ export function slabOf(doc: Doc, el: El): El | null {
     const zl = Math.min(ri.A.z, ri.B.z) - ri.H / 2, zh = Math.max(ri.A.z, ri.B.z) + ri.H / 2;
     const m = mid(el.a, el.b);
     for (const f of doc.all('floor')) {
-      const top = floorTop(doc, f), bot = top - floorThick(doc, f);
+      const sf = surfaceOf(doc, f); // geneigte Decke: Höhen in der Leitungsmitte
+      const top = sf && !sf.flat ? sf.topAt(m) : floorTop(doc, f), bot = top - floorThick(doc, f);
       if (zl >= bot - 1 && zh <= top + 1 && floorArea(doc, f).some((poly) => pointInPoly(m, poly))) return f;
     }
     return null;

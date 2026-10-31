@@ -2,7 +2,8 @@
 // optional Füllstäbe. Auf Treppen folgt der Pfad der Steigungslinie.
 import type { Doc, El, Id } from '../../core/doc';
 import { newId } from '../../core/doc';
-import { V2, V3, sub, norm, perp, apply, eq, lerp, polylineLength } from '../../core/geom';
+import { V2, V3, sub, norm, perp, apply, eq, lerp, lineLine, polylineLength } from '../../core/geom';
+import { surfaceOf } from '../../views/surfaces';
 import { registerCategory, registerCommand, registerContextPanel, GROUPS, PropDef, PlanCtx, Solid, Face, Grip } from '../../core/registry';
 import { levelElev, typeOf, TypeEl, isPlanLike } from '../../core/view';
 import { fmtLen } from '../../core/units';
@@ -35,10 +36,26 @@ export function railPath(doc: Doc, r: El): V3[] {
   if (r.hostId) {
     const h = doc.get(r.hostId);
     if (h?.cat === 'stair') return stairSidePath(doc, h, r.side === -1 ? -1 : 1);
+    // auf Geschossdecke/Rampe/Platte: Pfad folgt der Oberseite (Zwischenpunkte an den Knicklinien), Versatz = baseOffset
+    const s = h ? surfaceOf(doc, h) : null;
+    if (s) {
+      const pts: V2[] = r.path ?? []; const out: V3[] = [];
+      const P = (p: V2): V3 => ({ x: p.x, y: p.y, z: s.topAt(p) + (r.baseOffset ?? 0) });
+      for (let i = 0; i < pts.length; i++) {
+        if (i > 0) {
+          const ts = (s.creases ?? []).map((c) => lineLine(pts[i - 1], pts[i], c.a, c.b)).filter((x): x is NonNullable<typeof x> => !!x && x.t > 1e-6 && x.t < 1 - 1e-6).map((x) => x.t).sort((a, b) => a - b);
+          for (const t of ts) out.push(P(lerp(pts[i - 1], pts[i], t)));
+        }
+        out.push(P(pts[i]));
+      }
+      return out;
+    }
   }
   const z = levelElev(doc, r.levelId) + (r.baseOffset ?? 0);
   return (r.path ?? []).map((p: V2) => ({ x: p.x, y: p.y, z }));
 }
+/** auf einer Treppe gehostet (Pfad aus der Treppe, nicht bearbeitbar) */
+const onStair = (doc: Doc, r: El): boolean => !!r.hostId && doc.get(r.hostId)?.cat === 'stair';
 const railLen = (pts: V3[]) => polylineLength(pts.map((p) => ({ x: p.x, y: p.y })));
 
 function railSolids(doc: Doc, r: El): Solid[] {
@@ -115,8 +132,8 @@ function railingProps(): PropDef[] {
   const g = GROUPS;
   return [
     { key: 'levelId', label: 'Basisebene', group: g.constraints, type: 'level', get: (e) => e.levelId, set: (e, v) => (e.hostId ? undefined : { levelId: v }) },
-    { key: 'baseOffset', label: 'Versatz unten', group: g.constraints, type: 'length', get: (e) => e.baseOffset ?? 0, set: (e, v) => (e.hostId ? undefined : { baseOffset: v }) },
-    { key: 'host', label: 'Host', group: g.constraints, type: 'readonly', get: (e, doc) => (e.hostId ? (doc.get(e.hostId)?.cat === 'stair' ? 'Treppe' : '') : '<keiner>') },
+    { key: 'baseOffset', label: 'Versatz unten', group: g.constraints, type: 'length', get: (e) => e.baseOffset ?? 0, set: (e, v, doc) => (onStair(doc, e) ? undefined : { baseOffset: v }) },
+    { key: 'host', label: 'Host', group: g.constraints, type: 'readonly', get: (e, doc) => (e.hostId ? (doc.get(e.hostId)?.cat === 'stair' ? 'Treppe' : doc.get(e.hostId) ? 'Geschossdecke / Platte' : '') : '<keiner>') },
     { key: 'side', label: 'Seite', group: g.constraints, type: 'select', options: [['1', 'Links'], ['-1', 'Rechts']], get: (e) => String(e.side ?? 1), set: (e, v) => (e.hostId ? { side: v === '-1' ? -1 : 1 } : undefined) },
     { key: 'length', label: 'Länge', group: g.dims, type: 'readonly', get: (e, doc) => fmtLen(railLen(railPath(doc, e))) },
     ...identityProps(),
@@ -140,10 +157,10 @@ registerCategory({
   cat: 'railing', label: 'Geländer', plural: 'Geländer', hasTypes: true, planOrder: 26,
   drawPlan: drawRailingPlan,
   solids: (el, doc) => railSolids(doc, el),
-  grips: (el, _doc, view): Grip[] => (el.hostId || !isPlanLike(view) ? [] : (el.path ?? []).map((p: V2, i: number) => ({ id: 'v:' + i, p, kind: 'end' as const }))),
-  dragGrip: (el, id, p) => { const m = id.match(/^v:(\d+)$/); if (!m || el.hostId) return; const i = +m[1]; return { path: el.path.map((q: V2, k: number) => (k === i ? p : q)) }; },
-  transform: (el, m, _doc, view) => (el.hostId || !isPlanLike(view) ? undefined : { path: el.path.map((p: V2) => apply(m, p)) }),
-  translate3d: (el, d) => (el.hostId ? undefined : { path: el.path.map((p: V2) => ({ x: p.x + d.x, y: p.y + d.y })), baseOffset: (el.baseOffset ?? 0) + d.z }),
+  grips: (el, doc, view): Grip[] => (onStair(doc, el) || !isPlanLike(view) ? [] : (el.path ?? []).map((p: V2, i: number) => ({ id: 'v:' + i, p, kind: 'end' as const }))),
+  dragGrip: (el, id, p, doc) => { const m = id.match(/^v:(\d+)$/); if (!m || onStair(doc, el)) return; const i = +m[1]; return { path: el.path.map((q: V2, k: number) => (k === i ? p : q)) }; },
+  transform: (el, m, doc, view) => (onStair(doc, el) || !isPlanLike(view) ? undefined : { path: el.path.map((p: V2) => apply(m, p)) }),
+  translate3d: (el, d, doc) => (onStair(doc, el) ? undefined : { path: el.path.map((p: V2) => ({ x: p.x + d.x, y: p.y + d.y })), baseOffset: (el.baseOffset ?? 0) + d.z }),
   center: (el, doc) => { const p = railPath(doc, el); return p.length ? { x: (p[0].x + p[p.length - 1].x) / 2, y: (p[0].y + p[p.length - 1].y) / 2 } : null; },
   props: () => railingProps(),
   typeProps: () => railingTypeProps(),
@@ -215,7 +232,7 @@ registerSimilar('railing', 'railing');
 registerContextPanel({ cats: ['railing'], panel: 'Geländer', items: ['floorEditBoundary'] });
 
 registerSketchEditor('railing', (el) => {
-  if (el.hostId) { app.status('Das Geländer folgt seiner Treppe; der Pfad kann nicht skizziert werden.'); return; }
+  if (onStair(app.doc, el)) { app.status('Das Geländer folgt seiner Treppe; der Pfad kann nicht skizziert werden.'); return; }
   const initial: SketchSeg[] = [];
   const p: V2[] = el.path ?? [];
   for (let i = 0; i + 1 < p.length; i++) initial.push({ a: p[i], b: p[i + 1] });

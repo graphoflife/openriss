@@ -13,7 +13,8 @@ import { V2, V3, add, sub, mul, dot, cross, dist, lineLine, pointInPoly, fromAng
 import { catDef, emitHook } from '../../core/registry';
 import { levelElev, typesOf } from '../../core/view';
 import { cached } from '../../core/cache';
-import { Wall, wallInfo, wallOpenings, wallType } from '../../elements/wall';
+import { Wall, wallInfo, wallOpenings, wallType, wallZAt } from '../../elements/wall';
+import { surfaceOf } from '../../views/surfaces';
 import { fmtNum } from '../../core/units';
 import { floorArea, floorTop, floorThick } from '../architecture/floor';
 import { RUN_CATS, MepRun, runInfo, sizeLabel, RunInfo, partnersOf } from './runs';
@@ -60,7 +61,7 @@ const up10 = (v: number) => Math.ceil(v / 10 - 1e-9) * 10;
 const outer = (ri: RunInfo) => ({ W: ri.W + 2 * ri.ins, H: ri.H + 2 * ri.ins });
 const runLabel = (doc: Doc, el: El, ri: RunInfo) => `${ri.sys.abbr} ${sizeLabel(doc, el)}`.trim();
 
-interface Slab { el: El; top: number; bot: number; area: MultiPoly }
+interface Slab { el: El; top: number; bot: number; area: MultiPoly; at: (p: V2) => [number, number] }
 /** tragende Geschossdecken (ohne reine Bodenaufbauten); Fläche ohne Schächte, aber inkl. früher erzeugter HLKSE-Öffnungen */
 function slabs(doc: Doc): Slab[] {
   return cached(doc, 'mepSlabs', '', () => doc.all('floor').filter((f) => {
@@ -69,7 +70,10 @@ function slabs(doc: Doc): Slab[] {
   }).map((f) => {
     const top = floorTop(doc, f);
     const own = doc.all('shaft').filter((s) => s.mepAuto && s.hostId === f.id && s.loops?.[0]?.length).map((s) => [s.loops[0]] as Poly);
-    return { el: f, top, bot: top - floorThick(doc, f), area: [...floorArea(doc, f), ...own] };
+    // geneigte Decken: UK/OK am Punkt; top/bot = Hüllhöhen
+    const s = surfaceOf(doc, f); const T = floorThick(doc, f);
+    if (s && !s.flat) return { el: f, top: s.zMax, bot: s.zMin, area: [...floorArea(doc, f), ...own], at: (p: V2) => [s.botAt(p), s.topAt(p)] as [number, number] };
+    return { el: f, top, bot: top - T, area: [...floorArea(doc, f), ...own], at: () => [top - T, top] as [number, number] };
   }));
 }
 const inArea = (p: V2, a: MultiPoly) => a.some((poly) => pointInPoly(p, poly));
@@ -92,8 +96,9 @@ export function findPenetrations(doc: Doc, o: PenOpts = {}): Penetration[] {
         const cosA = Math.sqrt(Math.max(0, 1 - sinA * sinA));
         // Leitung kreuzt die Wandachse (endet sie davor, z. B. Anschluss an der Wand, zählt sie nicht)
         const zc = ri.A.z + (ri.B.z - ri.A.z) * x.t;
-        if (zc <= wi.z0 + 1 || zc >= wi.z1 - 1) continue;
         const u = x.u * wi.L;
+        const [wz0, wz1] = wallZAt(doc, w, u);
+        if (zc <= wz0 + 1 || zc >= wz1 - 1) continue;
         const slopeZ = ri.L2 > 1 ? Math.abs(ri.B.z - ri.A.z) / ri.L2 * (wi.T / sinA) : 0;
         const wAlong = W / sinA + (wi.T * cosA) / sinA, hz = H + slopeZ;
         // in bestehender Öffnung (Tür/Fenster/Öffnung, nicht von HLKSE erzeugt)?
@@ -116,26 +121,31 @@ export function findPenetrations(doc: Doc, o: PenOpts = {}): Penetration[] {
     for (const s of sl) {
       const zl = Math.min(ri.A.z, ri.B.z), zh = Math.max(ri.A.z, ri.B.z);
       if (ri.vertical) {
-        if (zl < s.bot - 1 && zh > s.top + 1 && inArea(r.a, s.area)) {
+        const [sb, stp] = s.at(r.a);
+        if (zl < sb - 1 && zh > stp + 1 && inArea(r.a, s.area)) {
           const d = coreDia(W + c);
-          out.push({ key: '', kind: 'slab', hostId: s.el.id, hostCat: 'floor', hostName: doc.get(s.el.typeId)?.name ?? 'Decke', runIds: [r.id], p: { x: r.a.x, y: r.a.y, z: (s.top + s.bot) / 2 }, shape: ri.round ? 'round' : 'rect', w: ri.round ? d : up10(W + c), h: ri.round ? d : up10(H + c), dir: { x: 1, y: 0 }, label: '', purpose: lab });
+          out.push({ key: '', kind: 'slab', hostId: s.el.id, hostCat: 'floor', hostName: doc.get(s.el.typeId)?.name ?? 'Decke', runIds: [r.id], p: { x: r.a.x, y: r.a.y, z: (sb + stp) / 2 }, shape: ri.round ? 'round' : 'rect', w: ri.round ? d : up10(W + c), h: ri.round ? d : up10(H + c), dir: { x: 1, y: 0 }, label: '', purpose: lab });
         }
         continue;
       }
-      const zm = (s.top + s.bot) / 2;
-      // geneigte Leitung durch die Decke
-      if (zl < s.bot - 1 && zh > s.top + 1) {
-        const t = (zm - ri.A.z) / (ri.B.z - ri.A.z);
-        const p2 = add(r.a, mul(sub(r.b, r.a), t));
+      // geneigte Leitung durch die Decke (geneigte Decke: Durchstosspunkt iterativ)
+      let zm = (s.top + s.bot) / 2, p2 = r.a, sb = s.bot, stp = s.top;
+      for (let k = 0; k < 3; k++) {
+        const t = (zm - ri.A.z) / (ri.B.z - ri.A.z || 1e-9);
+        p2 = add(r.a, mul(sub(r.b, r.a), t)); [sb, stp] = s.at(p2); zm = (sb + stp) / 2;
+      }
+      if (zl < sb - 1 && zh > stp + 1) {
         if (inArea(p2, s.area)) {
           const tanA = ri.L2 / Math.abs(ri.B.z - ri.A.z);
-          const len = W / Math.max(0.1, Math.cos(Math.atan(tanA))) + (s.top - s.bot) * tanA;
+          const len = W / Math.max(0.1, Math.cos(Math.atan(tanA))) + (stp - sb) * tanA;
           out.push({ key: '', kind: 'slab', hostId: s.el.id, hostCat: 'floor', hostName: doc.get(s.el.typeId)?.name ?? 'Decke', runIds: [r.id], p: { x: p2.x, y: p2.y, z: zm }, shape: 'rect', w: up10(len + c), h: up10(W + c), dir: ri.d2, label: '', purpose: lab });
         }
         continue;
       }
       // in der Deckenstärke verlegt → Einlage
-      if (o.embeds !== false && r.cat !== 'pipe' && zl - H / 2 > s.bot + 5 && zh + H / 2 < s.top - 5 && inArea(r.a, s.area) && inArea(r.b, s.area)) {
+      const [ba, ta] = s.at(r.a), [bb, tb] = s.at(r.b);
+      const inSlab = Math.min(ri.A.z - ba, ri.B.z - bb) - H / 2 > 5 && Math.min(ta - ri.A.z, tb - ri.B.z) - H / 2 > 5;
+      if (o.embeds !== false && r.cat !== 'pipe' && inSlab && inArea(r.a, s.area) && inArea(r.b, s.area)) {
         out.push({ key: '', kind: 'embed', hostId: s.el.id, hostCat: 'floor', hostName: doc.get(s.el.typeId)?.name ?? 'Decke', runIds: [r.id], p: { x: (r.a.x + r.b.x) / 2, y: (r.a.y + r.b.y) / 2, z: (ri.A.z + ri.B.z) / 2 }, shape: 'round', w: ri.W, h: ri.H, label: '', purpose: lab });
       }
     }

@@ -3,7 +3,7 @@
 import type { Doc, El, Id } from '../core/doc';
 import {
   V2, add, sub, mul, dot, norm, perp, dist, lerp, eq, lineLine, projectT, sideDist, cross,
-  Ring, Poly, MultiPoly, difference, intersection, signedArea, ensureCCW, segRect, angleOf, pointInRing,
+  Ring, Poly, MultiPoly, difference, intersection, union, signedArea, ensureCCW, ensureCW, segRect, angleOf, pointInRing,
   distToSeg, apply, Mat2, isMirror, mid, closestOnLine, V3, bboxOf, boxInflate, boxOverlap, clipRingHalfPlane,
 } from '../core/geom';
 import { registerCategory, catDef, CategoryDef, PlanCtx, Solid, Face, PropDef, GROUPS, TempDim, Grip, emitHook } from '../core/registry';
@@ -49,12 +49,67 @@ export interface Wall extends El {
   structural?: boolean;
   roomBounding?: boolean;
   noJoinA?: boolean; noJoinB?: boolean;
+  /** Oberkante fixiert an Dach/Geschossdecke (Unterseite) */
+  attachTopId?: Id;
+  /** Unterkante fixiert an Geschossdecke/Fundamentplatte (auch geneigt/Rampe) */
+  attachBaseId?: Id;
+  /** Unterkante an Oberseite (Standard) oder Unterseite der Platte */
+  attachBaseTo?: 'top' | 'bottom';
+  /** über die Wanddicke: 'min' (Standard) = tiefster Punkt, die Wand greift in die Platte ein; 'max' = höchster Punkt, kein Eingriff (Spalt) */
+  attachBaseMode?: 'min' | 'max';
 }
 
-/** Erweiterungspunkt: Dach/Decke liefert Oberkantenprofil für "Oben fixieren". */
-export type WallTopProvider = (w: Wall, doc: Doc, c0: V2, c1: V2, zTop: number) => { u: number; z: number }[] | null;
+/** Höhenprofil entlang der Wandachse (u ab c0, z absolut), nach u sortiert */
+export type WallProfile = { u: number; z: number }[];
+/**
+ * Erweiterungspunkt: Dach/Decke liefert das Oberkantenprofil («Oben fixieren», which = 'top') bzw. das
+ * Unterkantenprofil («Unten fixieren», which = 'base'); zNom = Nennhöhe (wi.z1 bzw. wi.z0).
+ */
+export type WallTopProvider = (w: Wall, doc: Doc, c0: V2, c1: V2, zNom: number, which: 'top' | 'base') => WallProfile | null;
 const topProviders: WallTopProvider[] = [];
 export function registerWallTopProvider(p: WallTopProvider): void { topProviders.push(p); }
+
+/** Höhe eines Profils an der Stelle u (ausserhalb: Endwerte; ohne Profil: fb) */
+export function profAt(pr: WallProfile | null | undefined, u: number, fb: number): number {
+  if (!pr || !pr.length) return fb;
+  if (u <= pr[0].u) return pr[0].z;
+  for (let i = 1; i < pr.length; i++) if (u <= pr[i].u) {
+    const a = pr[i - 1], b = pr[i]; const f = (u - a.u) / Math.max(1e-9, b.u - a.u); return a.z + (b.z - a.z) * f;
+  }
+  return pr[pr.length - 1].z;
+}
+/** grösster Profilwert im Bereich u0..u1 */
+export function profMax(pr: WallProfile, u0: number, u1: number): number {
+  let z = Math.max(profAt(pr, u0, -Infinity), profAt(pr, u1, -Infinity));
+  for (const q of pr) if (q.u > u0 && q.u < u1) z = Math.max(z, q.z);
+  return z;
+}
+
+export interface WallBounds {
+  /** Oberkanten-/Unterkantenprofil (fixiert), sonst null = waagrecht auf wi.z1 / wi.z0 */
+  top: WallProfile | null; base: WallProfile | null;
+  /** Hüllhöhen (absolut) – wi.z0/z1 bleiben die Nennhöhen der Abhängigkeiten */
+  zMin: number; zMax: number;
+}
+/** Profile und Höhenbereich einer Wand (oben/unten fixiert) */
+export function wallBounds(doc: Doc, w: Wall): WallBounds {
+  return cached(doc, 'wallBounds', w.id, () => {
+    const wi = wallInfo(doc, w);
+    const get = (which: 'top' | 'base'): WallProfile | null => {
+      for (const p of topProviders) { const r = p(w, doc, wi.c0, wi.c1, which === 'top' ? wi.z1 : wi.z0, which); if (r && r.length) return r; }
+      return null;
+    };
+    const top = get('top'), base = get('base');
+    const zMin = base ? Math.min(...base.map((q) => q.z)) : wi.z0;
+    return { top, base, zMin, zMax: Math.max(top ? Math.max(...top.map((q) => q.z)) : wi.z1, zMin + 1) };
+  });
+}
+/** Unter- und Oberkante der Wand an der Stelle u (entlang der Achse ab c0) */
+export function wallZAt(doc: Doc, w: Wall, u: number): [number, number] {
+  const wi = wallInfo(doc, w); const b = wallBounds(doc, w);
+  const z0 = profAt(b.base, u, wi.z0);
+  return [z0, Math.max(profAt(b.top, u, wi.z1), z0 + 1)];
+}
 
 /** Erweiterungspunkt: Öffnung (Tür, Fenster, Wandöffnung) im Host – Bereich entlang der Wandachse. */
 export interface HostOpening {
@@ -269,12 +324,19 @@ function visibleParts(a: V2, b: V2, others: Ring[]): [V2, V2][] {
 
 function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
   const { doc, dl } = ctx;
-  const cutWalls: { w: Wall; wi: WallInfo; shape: Poly; ring: Ring }[] = [];
+  const cutWalls: { w: Wall; wi: WallInfo; shape: Poly; ring: Ring; clip?: MultiPoly }[] = [];
   const projPen = catPen(doc, 'wall', false), cutPen = catPen(doc, 'wall', true);
   for (const el of walls) {
     const w = el as Wall; const wi = wallInfo(doc, w);
     if (wi.L < 1) continue;
-    if (wi.z0 <= ctx.cutZ && wi.z1 > ctx.cutZ) {
+    const wb = wallBounds(doc, w);
+    if (wb.top || wb.base) {
+      // Ober-/Unterkante als Profil: nur die Bereiche schneiden, in denen die Schnittebene die Wand trifft
+      const sh = wallShape(doc, w);
+      const parts = profiledPlanParts(doc, w, wi, sh.ring, ctx.cutZ, ctx.depthZ);
+      if (parts.cut.length) cutWalls.push({ w, wi, shape: [sh.ring], ring: sh.ring, clip: parts.all ? undefined : parts.cut });
+      if (parts.below.length) { dl.begin(w.id); for (const p of parts.below) dl.poly(p[0], projPen, true); }
+    } else if (wi.z0 <= ctx.cutZ && wi.z1 > ctx.cutZ) {
       const sh = wallShape(doc, w);
       cutWalls.push({ w, wi, shape: [sh.ring], ring: sh.ring });
     } else if (wi.z1 <= ctx.cutZ && wi.z1 > ctx.depthZ - 1) {
@@ -286,7 +348,7 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
   const rings = cutWalls.map((c) => c.ring);
   const boxes = rings.map((r) => boxInflate(bboxOf(r), 2));
   for (let i = 0; i < cutWalls.length; i++) {
-    const { w, wi, ring } = cutWalls[i];
+    const { w, wi, ring, clip } = cutWalls[i];
     dl.begin(w.id);
     // Basislinie (unsichtbar) für Fang an Wandenden/-achsen
     dl.line(w.a, w.b, { w: 1 }, { inv: true, sub: 'loc' });
@@ -294,6 +356,7 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
     const spans = wallOpenings(doc, w).filter((o) => o.cutsPlan !== false).map((o) => openingSpanAt(o, ctx.cutZ)).filter((x): x is [number, number] => !!x && x[1] - x[0] > 1);
     let body: MultiPoly = [[ring]];
     if (spans.length) body = difference([ring], ...spans.map(([a, b]) => [openingRect(wi, a, b)]));
+    if (clip) body = intersection(body, clip);
     const t = wallType(doc, w);
     if (ctx.detail === 'coarse' || !t || t.layers.length <= 1) {
       const core = t?.layers.find((l) => l.core) ?? t?.layers[0];
@@ -330,6 +393,34 @@ function drawWallsPlan(ctx: PlanCtx, walls: El[]): void {
   }
 }
 
+/** Grundriss einer Wand mit Profil: geschnittene Teile (Unterkante ≤ Schnitt < Oberkante) und Teile unterhalb (Oberkante ≤ Schnitt) */
+function profiledPlanParts(doc: Doc, w: Wall, wi: WallInfo, ring: Ring, cutZ: number, depthZ: number): { cut: MultiPoly; below: MultiPoly; all: boolean } {
+  const b = wallBounds(doc, w);
+  const us0 = ring.map((p) => dot(sub(p, wi.c0), wi.d));
+  const lo = Math.min(...us0), hi = Math.max(...us0);
+  const zb = (u: number) => profAt(b.base, u, wi.z0), zt = (u: number) => Math.max(profAt(b.top, u, wi.z1), zb(u) + 1);
+  const cand = [...new Set([lo, hi, ...[...(b.base ?? []), ...(b.top ?? [])].map((q) => q.u).filter((u) => u > lo && u < hi)])].sort((x, y) => x - y);
+  const us = new Set(cand);
+  for (let i = 0; i + 1 < cand.length; i++) {
+    const a = cand[i], c = cand[i + 1];
+    for (const f of [zb, zt]) { const fa = f(a) - cutZ, fc = f(c) - cutZ; if (fa * fc < 0) us.add(a + (fa / (fa - fc)) * (c - a)); }
+  }
+  const ss = [...us].sort((x, y) => x - y);
+  const cls = (u: number) => (zb(u) <= cutZ && zt(u) > cutZ ? 1 : zt(u) <= cutZ && zt(u) > depthZ - 1 ? 2 : 0);
+  const iv: { a: number; b: number; k: number }[] = [];
+  for (let i = 0; i + 1 < ss.length; i++) {
+    if (ss[i + 1] - ss[i] < 0.01) continue;
+    const k = cls((ss[i] + ss[i + 1]) / 2); const last = iv[iv.length - 1];
+    if (last && last.k === k) last.b = ss[i + 1]; else iv.push({ a: ss[i], b: ss[i + 1], k });
+  }
+  const pick = (k: number): MultiPoly => {
+    const bands = iv.filter((x) => x.k === k).map((x) => [uBand(wi, x.a === lo ? lo - wi.T * 10 : x.a, x.b === hi ? hi + wi.T * 10 : x.b)] as Poly);
+    return bands.length ? intersection([ring], bands.length > 1 ? union(bands) : bands[0]) : [];
+  };
+  const all = iv.length === 1 && iv[0].k === 1;
+  return { cut: all ? [[ring]] : pick(1), below: pick(2), all };
+}
+
 function faceSub(wi: WallInfo, p: V2, q: V2): string | undefined {
   const m = mid(p, q); const s = sideDist(m, wi.c0, wi.c1);
   if (Math.abs(Math.abs(s) - wi.T / 2) < 0.5) return s > 0 ? 'faceL' : 'faceR';
@@ -363,8 +454,7 @@ export function wallSolids(doc: Doc, w: Wall): Solid[] {
   const t = wallType(doc, w);
   const coreMat = (t?.layers.find((l) => l.core) ?? t?.layers[0])?.mat;
   const z0 = wi.z0, z1 = wi.z1;
-  let profile: { u: number; z: number }[] | null = null;
-  for (const p of topProviders) { profile = p(w, doc, wi.c0, wi.c1, z1); if (profile) break; }
+  const { top: profile, base } = wallBounds(doc, w);
 
   // Pro Schicht ein Körper (Schnitte zeigen Schichten); bei 1 Schicht nur einer
   const layers = t && t.layers.length > 1 ? layerOffsets(doc, w) : null;
@@ -381,7 +471,7 @@ export function wallSolids(doc: Doc, w: Wall): Solid[] {
     });
   } else pieces.push({ ring, mat: coreMat, z1 });
 
-  return pieces.map((pc) => ({ faces: wallPieceFaces(wi, pc.ring, ops, z0, pc.z1, profile), mat: pc.mat }));
+  return pieces.map((pc) => ({ faces: wallPieceFaces(wi, pc.ring, ops, z0, pc.z1, profile, base), mat: pc.mat }));
 }
 
 /** Welche Schichten über die Deckenstirn laufen (Schicht-Option oder Typvorgabe für Außenschichten) */
@@ -396,42 +486,58 @@ export function wrapTopZ(doc: Doc, w: Wall, z1: number): number {
   return Math.max(z1, levelElev(doc, w.topLevelId));
 }
 
-function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: number, z1: number, profile: { u: number; z: number }[] | null): Face[] {
+const zHiBase = (pr: WallProfile) => Math.max(...pr.map((q) => q.z));
+/** Streifen quer über die Wand zwischen u = ua und ub (für Profilflächen und Grundriss-Bereiche) */
+function uBand(wi: WallInfo, ua: number, ub: number): Ring {
+  const w = wi.T * 3 + 10;
+  return [add(wi.c0, add(mul(wi.d, ua), mul(wi.n, -w))), add(wi.c0, add(mul(wi.d, ub), mul(wi.n, -w))), add(wi.c0, add(mul(wi.d, ub), mul(wi.n, w))), add(wi.c0, add(mul(wi.d, ua), mul(wi.n, w)))];
+}
+
+function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: number, z1: number, profile: WallProfile | null, base: WallProfile | null = null): Face[] {
   const ring = ensureCCW(ringIn);
   const faces: Face[] = [];
-  const opRects = ops.map((o) => ({ ...o, z0: Math.max(o.z0, z0), z1: Math.min(o.z1, z1) })).filter((o) => o.z1 > o.z0 + 1 && o.u1 > o.u0 + 1);
+  if (profile && !profile.length) profile = null;
+  if (base && !base.length) base = null;
+  // Hüllhöhen (Öffnungen auf den Wandbereich begrenzen)
+  const zLo = base ? Math.min(...base.map((q) => q.z)) : z0, zHi = profile ? Math.max(z1, ...profile.map((q) => q.z)) : z1;
+  const opRects = ops.map((o) => ({ ...o, z0: Math.max(o.z0, base ? zLo : z0), z1: Math.min(o.z1, profile && base ? zHi : z1) })).filter((o) => o.z1 > o.z0 + 1 && o.u1 > o.u0 + 1);
   const uOf = (p: V2) => dot(sub(p, wi.c0), wi.d);
-  const topAt = (u: number): number => {
-    if (!profile || !profile.length) return z1;
-    if (u <= profile[0].u) return profile[0].z;
-    for (let i = 1; i < profile.length; i++) if (u <= profile[i].u) {
-      const a = profile[i - 1], b = profile[i]; const f = (u - a.u) / Math.max(1e-9, b.u - a.u); return a.z + (b.z - a.z) * f;
-    }
-    return profile[profile.length - 1].z;
-  };
+  const botAt = (u: number): number => profAt(base, u, z0);
+  const topAt = (u: number): number => (base ? Math.max(profAt(profile, u, z1), botAt(u) + 1) : profAt(profile, u, z1));
   const at3 = (p: V2, z: number): V3 => ({ x: p.x, y: p.y, z });
+  /** Draufsicht in Streifen zwischen den Profil- und Öffnungsstellen (Fläche je Streifen eben); cut: Öffnung durchstösst die Fläche */
+  const strips = (pr: WallProfile, zf: (u: number) => number, up: boolean, cut: (o: HostOpening, ua: number, ub: number) => boolean) => {
+    const us = [...new Set([...pr.map((p) => p.u), ...ring.map(uOf), ...opRects.flatMap((o) => (o.profile ? [] : [o.u0, o.u1]))])].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < us.length; i++) {
+      const ua = us[i], ub = us[i + 1]; if (ub - ua < 0.5) continue;
+      let parts: MultiPoly = intersection([ring], [uBand(wi, ua, ub)]);
+      const cuts = opRects.filter((o) => !o.profile && o.u0 <= ua + 0.5 && o.u1 >= ub - 0.5 && cut(o, ua, ub)).map((o) => [openingRect(wi, o.u0, o.u1)] as Poly);
+      if (cuts.length && parts.length) parts = difference(parts, ...cuts);
+      for (const p of parts) {
+        const o = ensureCCW(p[0]); const hs = p.slice(1).map((h) => ensureCW(h));
+        const L = (r: V2[]) => (up ? r : r.slice().reverse()).map((q) => at3(q, zf(uOf(q))));
+        faces.push({ pts: L(o), holes: hs.length ? hs.map(L) : undefined });
+      }
+    }
+  };
 
-  // Boden
-  const botCut = opRects.filter((o) => o.z0 <= z0 + 0.5).map((o) => [openingRect(wi, o.u0, o.u1)] as Poly);
-  const bottom = botCut.length ? difference([ring], ...botCut) : [[ring]];
-  for (const p of bottom) faces.push({ pts: p[0].slice().reverse().map((q) => at3(q, z0)), holes: p.slice(1).map((h) => h.slice().reverse().map((q) => at3(q, z0))) });
+  // Boden (waagrecht oder Profil: unten fixiert, z.B. auf einer Rampe)
+  if (!base) {
+    const botCut = opRects.filter((o) => o.z0 <= z0 + 0.5).map((o) => [openingRect(wi, o.u0, o.u1)] as Poly);
+    const bottom = botCut.length ? difference([ring], ...botCut) : [[ring]];
+    for (const p of bottom) faces.push({ pts: p[0].slice().reverse().map((q) => at3(q, z0)), holes: p.slice(1).map((h) => h.slice().reverse().map((q) => at3(q, z0))) });
+  } else strips(base, botAt, false, (o, ua, ub) => o.z0 <= Math.min(botAt(ua), botAt(ub)) + 0.5);
 
   // Decke (flach oder Profil)
-  if (!profile) {
+  const flatTop = !profile && (!base || zHiBase(base) <= z1 - 1);
+  if (flatTop) {
     const topCut = opRects.filter((o) => o.z1 >= z1 - 0.5).map((o) => [openingRect(wi, o.u0, o.u1)] as Poly);
     const top = topCut.length ? difference([ring], ...topCut) : [[ring]];
     for (const p of top) faces.push({ pts: p[0].map((q) => at3(q, z1)), holes: p.slice(1).map((h) => h.map((q) => at3(q, z1))) });
-  } else {
-    // Profil: Draufsicht in Streifen zerlegen
-    const us = [...new Set([...profile.map((p) => p.u), ...ring.map(uOf)])].sort((a, b) => a - b);
-    for (let i = 0; i + 1 < us.length; i++) {
-      const ua = us[i], ub = us[i + 1]; if (ub - ua < 0.5) continue;
-      const band: Ring = [add(wi.c0, add(mul(wi.d, ua), mul(wi.n, -wi.T * 3))), add(wi.c0, add(mul(wi.d, ub), mul(wi.n, -wi.T * 3))), add(wi.c0, add(mul(wi.d, ub), mul(wi.n, wi.T * 3))), add(wi.c0, add(mul(wi.d, ua), mul(wi.n, wi.T * 3)))];
-      for (const p of intersection([ring], [band])) faces.push({ pts: ensureCCW(p[0]).map((q) => at3(q, topAt(uOf(q)))) });
-    }
-  }
+  } else strips(profile ?? [], topAt, true, (o, ua, ub) => o.z1 >= Math.max(topAt(ua), topAt(ub)) - 0.5);
 
   // Seitenflächen
+  const prof = profile ?? [];
   for (let i = 0; i < ring.length; i++) {
     const p = ring[i], q = ring[(i + 1) % ring.length];
     const L = dist(p, q); if (L < 0.01) continue;
@@ -439,18 +545,23 @@ function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: numb
     const parallel = Math.abs(cross(e, wi.d)) < 1e-3;
     // Fläche in (s, z)
     const s2p = (s: number) => add(p, mul(e, s));
+    const stepsOf = (pr: WallProfile): number[] => {
+      const st: number[] = [0, L];
+      for (const pp of pr) { const s = dot(sub(add(wi.c0, mul(wi.d, pp.u)), p), e); if (s > 0 && s < L) st.push(s); }
+      return st.sort((a, b) => a - b);
+    };
     let outer: V2[];
-    if (profile) {
-      const steps: number[] = [0, L];
-      for (const pp of profile) { const s = dot(sub(add(wi.c0, mul(wi.d, pp.u)), p), e); if (s > 0 && s < L) steps.push(s); }
-      steps.sort((a, b) => a - b);
-      outer = [{ x: 0, y: z0 }, { x: L, y: z0 }, ...steps.slice().reverse().map((s) => ({ x: s, y: topAt(uOf(s2p(s))) }))];
+    if (base) {
+      outer = [...stepsOf(base).map((s) => ({ x: s, y: botAt(uOf(s2p(s))) })), ...stepsOf(prof).reverse().map((s) => ({ x: s, y: topAt(uOf(s2p(s))) }))];
+    } else if (profile) {
+      outer = [{ x: 0, y: z0 }, { x: L, y: z0 }, ...stepsOf(profile).reverse().map((s) => ({ x: s, y: topAt(uOf(s2p(s))) }))];
     } else outer = [{ x: 0, y: z0 }, { x: L, y: z0 }, { x: L, y: z1 }, { x: 0, y: z1 }];
     let polys: MultiPoly = [[outer]];
     if (parallel && opRects.length) {
       const sOf = (u: number) => dot(sub(add(wi.c0, mul(wi.d, u)), p), e);
+      const zc = base ? (z: number) => Math.max(zLo, Math.min(zHi, z)) : (z: number) => Math.max(z0, Math.min(z1, z));
       const holes = opRects.map((o) => {
-        if (o.profile && o.profile.length >= 3) return [o.profile.map((q) => ({ x: sOf(q.u), y: Math.max(z0, Math.min(z1, q.z)) }))] as Poly;
+        if (o.profile && o.profile.length >= 3) return [o.profile.map((q) => ({ x: sOf(q.u), y: zc(q.z) }))] as Poly;
         const sa = sOf(o.u0), sb = sOf(o.u1);
         const s0 = Math.min(sa, sb), s1 = Math.max(sa, sb);
         return [[{ x: s0, y: o.z0 }, { x: s1, y: o.z0 }, { x: s1, y: o.z1 }, { x: s0, y: o.z1 }]] as Poly;
@@ -465,6 +576,11 @@ function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: numb
   // Leibungen
   const sideOffs = ring.map((p) => sideDist(p, wi.c0, wi.c1));
   const oMin = Math.min(...sideOffs), oMax = Math.max(...sideOffs);
+  /** Teilstücke u0..u1 an den Profilstellen (Brüstung/Sturz je Abschnitt) */
+  const pieces = (pr: WallProfile | null, u0: number, u1: number): [number, number][] => {
+    const us = [u0, ...(pr ?? []).map((q) => q.u).filter((u) => u > u0 + 0.5 && u < u1 - 0.5), u1];
+    return us.slice(1).map((u, i) => [us[i], u] as [number, number]);
+  };
   for (const o of opRects) {
     const R = (u: number, z: number) => at3(add(add(wi.c0, mul(wi.d, u)), mul(wi.n, oMin)), z);
     const Lp = (u: number, z: number) => at3(add(add(wi.c0, mul(wi.d, u)), mul(wi.n, oMax)), z);
@@ -477,10 +593,22 @@ function wallPieceFaces(wi: WallInfo, ringIn: Ring, ops: HostOpening[], z0: numb
       }
       continue;
     }
-    faces.push({ pts: [R(o.u0, o.z0), Lp(o.u0, o.z0), Lp(o.u0, o.z1), R(o.u0, o.z1)] });
-    faces.push({ pts: [Lp(o.u1, o.z0), R(o.u1, o.z0), R(o.u1, o.z1), Lp(o.u1, o.z1)] });
-    if (o.z0 > z0 + 0.5) faces.push({ pts: [R(o.u0, o.z0), R(o.u1, o.z0), Lp(o.u1, o.z0), Lp(o.u0, o.z0)] });
-    if (o.z1 < z1 - 0.5) faces.push({ pts: [Lp(o.u0, o.z1), Lp(o.u1, o.z1), R(o.u1, o.z1), R(o.u0, o.z1)] });
+    if (!base && !profile) {
+      faces.push({ pts: [R(o.u0, o.z0), Lp(o.u0, o.z0), Lp(o.u0, o.z1), R(o.u0, o.z1)] });
+      faces.push({ pts: [Lp(o.u1, o.z0), R(o.u1, o.z0), R(o.u1, o.z1), Lp(o.u1, o.z1)] });
+    } else {
+      // Ober-/Unterkante als Profil: Leibungen zwischen Unter- und Oberkante an dieser Stelle begrenzen
+      const jamb = (u: number, rev: boolean) => {
+        const zl = Math.max(o.z0, botAt(u)), zh = Math.min(o.z1, topAt(u)); if (zh - zl < 0.5) return;
+        faces.push({ pts: rev ? [Lp(u, zl), R(u, zl), R(u, zh), Lp(u, zh)] : [R(u, zl), Lp(u, zl), Lp(u, zh), R(u, zh)] });
+      };
+      jamb(o.u0, false); jamb(o.u1, true);
+    }
+    // Brüstung (je Abschnitt der Unterkante)
+    if (!base) { if (o.z0 > z0 + 0.5) faces.push({ pts: [R(o.u0, o.z0), R(o.u1, o.z0), Lp(o.u1, o.z0), Lp(o.u0, o.z0)] }); }
+    else for (const [ua, ub] of pieces(base, o.u0, o.u1)) if (o.z0 > Math.min(botAt(ua), botAt(ub)) + 0.5) faces.push({ pts: [R(ua, o.z0), R(ub, o.z0), Lp(ub, o.z0), Lp(ua, o.z0)] });
+    if (flatTop) { if (o.z1 < z1 - 0.5) faces.push({ pts: [Lp(o.u0, o.z1), Lp(o.u1, o.z1), R(o.u1, o.z1), R(o.u0, o.z1)] }); }
+    else for (const [ua, ub] of pieces(profile, o.u0, o.u1)) if (o.z1 < Math.max(topAt(ua), topAt(ub)) - 0.5) faces.push({ pts: [Lp(ua, o.z1), Lp(ub, o.z1), R(ub, o.z1), R(ua, o.z1)] });
   }
   return faces;
 }
@@ -574,10 +702,34 @@ export function flipWall(w: Wall): Partial<Wall> {
 
 export function wallArea(doc: Doc, w: Wall): number {
   const wi = wallInfo(doc, w);
+  const wb = wallBounds(doc, w);
+  if (wb.top || wb.base) return profiledWallArea(doc, w, wi, wb);
   let a = wi.L * (wi.z1 - wi.z0);
   for (const o of wallOpenings(doc, w)) {
     if (o.profile && o.profile.length >= 3) a -= Math.abs(signedArea(o.profile.map((q) => ({ x: q.u, y: Math.max(wi.z0, Math.min(wi.z1, q.z)) }))));
     else a -= (o.u1 - o.u0) * (Math.min(o.z1, wi.z1) - Math.max(o.z0, wi.z0));
+  }
+  return Math.max(0, a);
+}
+
+/** Wandfläche mit Profil: ∫ (Oberkante − Unterkante) du über die Achslänge, abzüglich Öffnungen im Wandbereich */
+function profiledWallArea(doc: Doc, w: Wall, wi: WallInfo, wb: WallBounds): number {
+  const zb = (u: number) => profAt(wb.base, u, wi.z0), zt = (u: number) => Math.max(profAt(wb.top, u, wi.z1), zb(u));
+  const ops = wallOpenings(doc, w);
+  const us = [...new Set([0, wi.L, ...[...(wb.base ?? []), ...(wb.top ?? [])].map((q) => q.u), ...ops.flatMap((o) => [o.u0, o.u1])]
+    .filter((u) => u >= 0 && u <= wi.L))].sort((x, y) => x - y);
+  const integ = (f: (u: number) => number, u0: number, u1: number) => {
+    let a = 0;
+    for (let i = 0; i + 1 < us.length; i++) {
+      const ua = Math.max(u0, us[i]), ub = Math.min(u1, us[i + 1]); if (ub - ua < 1e-6) continue;
+      a += ((f(ua) + f(ub)) / 2) * (ub - ua);
+    }
+    return a;
+  };
+  let a = integ((u) => zt(u) - zb(u), 0, wi.L);
+  for (const o of ops) {
+    if (o.profile && o.profile.length >= 3) a -= Math.abs(signedArea(o.profile.map((q) => ({ x: q.u, y: Math.max(zb(q.u), Math.min(zt(q.u), q.z)) }))));
+    else a -= integ((u) => Math.max(0, Math.min(o.z1, zt(u)) - Math.max(o.z0, zb(u))), o.u0, o.u1);
   }
   return Math.max(0, a);
 }

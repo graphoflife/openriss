@@ -74,6 +74,16 @@ export function planRange(doc: Doc, view: View) {
   return { level: lvl, cutZ: elev + r.cut, bottomZ: elev + r.bottom, topZ: elev + r.top, depthZ: elev + r.depth };
 }
 
+/** Projektor des Grundrisses: Schnitt bei cutZ, Blick nach unten (Deckenplan: nach oben) */
+export function planProjector(cutZ: number, ceiling = false): Projector {
+  return {
+    origin: { x: 0, y: 0, z: cutZ },
+    dir: { x: 0, y: 0, z: ceiling ? 1 : -1 },
+    toView: (p) => ({ x: p.x, y: p.y }),
+    depth: (p) => (ceiling ? p.z - cutZ : cutZ - p.z),
+  };
+}
+
 export type BuildOpts = DLOpts;
 
 export function buildViewDL(doc: Doc, view: View, o: BuildOpts = {}): DisplayList {
@@ -152,12 +162,7 @@ function buildPlan(doc: Doc, view: View, dl: DisplayList, o: BuildOpts): void {
   // 2) Allgemeine Körper: Schnitt bei cutZ, Projektion nach unten bis Ansichtstiefe
   if (generic.length) {
     const ceiling = view.kind === 'ceiling';
-    const pr: Projector = {
-      origin: { x: 0, y: 0, z: r.cutZ },
-      dir: { x: 0, y: 0, z: ceiling ? 1 : -1 },
-      toView: (p) => ({ x: p.x, y: p.y }),
-      depth: (p) => (ceiling ? p.z - r.cutZ : r.cutZ - p.z),
-    };
+    const pr = planProjector(r.cutZ, ceiling);
     drawSolids(doc, generic, pr, dl, {
       cut: true, far: ceiling ? r.topZ - r.cutZ : r.cutZ - r.depthZ, detail: view.detail, crop,
     });

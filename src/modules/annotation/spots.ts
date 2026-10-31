@@ -13,6 +13,7 @@ import { Tool, ToolEvent, OptionItem } from '../../tools/tool';
 import { fontFamily, solid, myPlacement, previewEl, FONTS, PREV_COL, typeWf, widthFactorProp } from './common';
 import { fmtDec, fmtElevMode, fmtElevSigned, DecSep, ElevMode } from './numfmt';
 import { defaultSpotType } from './types';
+import { surfaceOf } from '../../views/surfaces';
 
 export type SpotKind = 'elev' | 'coord' | 'slab';
 export interface Spot extends El {
@@ -51,7 +52,12 @@ export function fmtElevDec(mm: number, dec: number, sep: DecSep = ','): string {
 
 export function spotZ(doc: Doc, view: View, el: Spot): number {
   if (isSectionLike(view)) return el.p.y + makeProjector(view).origin.z;
-  if (isPlanLike(view)) return levelElev(doc, view.levelId) + (el.zOff ?? 0);
+  if (isPlanLike(view)) {
+    // auf einer geneigten Decke/Rampe: Höhe der Oberfläche am Punkt
+    const s = view.kind === 'plan' ? slabsAt(doc, view, el.p, 'all')[0] : undefined;
+    if (s && s.sloped) return s.top + (el.zOff ?? 0);
+    return levelElev(doc, view.levelId) + (el.zOff ?? 0);
+  }
   return el.p.y + (el.zOff ?? 0);
 }
 
@@ -60,20 +66,23 @@ function fmtZ(doc: Doc, st: SpotStyle, z: number): string { return fmtElevMode(z
 
 // ------------------------------------------------------------ Decken/Platten am Punkt (Koten-Kästchen)
 export const SLAB_CATS = ['floor', 'foundationSlab'];
-export interface SlabHit { el: El; top: number; bot: number; d: number }
+export interface SlabHit { el: El; top: number; bot: number; d: number; sloped?: boolean }
 
-/** OK/UK/Dicke einer Decke (Typschichten, Bezug Tragschicht) bzw. Fundamentplatte (Typdicke) */
-export function slabLevels(doc: Doc, el: El, ref: 'core' | 'all' = 'core'): SlabHit {
+/** OK/UK/Dicke einer Decke (Typschichten, Bezug Tragschicht) bzw. Fundamentplatte (Typdicke); geneigte Platten: am Punkt p */
+export function slabLevels(doc: Doc, el: El, ref: 'core' | 'all' = 'core', p?: V2): SlabHit {
   const t: any = doc.get(el.typeId) ?? {};
-  const top0 = levelElev(doc, el.levelId) + (el.offset ?? 0);
-  if (el.cat !== 'floor') { const d = t.t ?? 300; return { el, top: top0, bot: top0 - d, d }; }
+  const flat0 = levelElev(doc, el.levelId) + (el.offset ?? 0);
+  const surf = surfaceOf(doc, el); const sloped = !!surf && !surf.flat;
+  const top0 = sloped && p ? surf!.topAt(p) : flat0;
+  const sl = sloped ? { sloped } : {};
+  if (el.cat !== 'floor') { const d = t.t ?? 300; return { el, top: top0, bot: top0 - d, d, ...sl }; }
   const L: { t: number; core?: boolean }[] = t.layers ?? [];
   const all = L.length ? L.reduce((s, l) => s + l.t, 0) : 200;
   const i0 = L.findIndex((l) => l.core); let i1 = -1;
   for (let i = L.length - 1; i >= 0; i--) if (L[i].core) { i1 = i; break; }
-  if (ref === 'all' || i0 < 0) return { el, top: top0, bot: top0 - all, d: all };
+  if (ref === 'all' || i0 < 0) return { el, top: top0, bot: top0 - all, d: all, ...sl };
   const above = L.slice(0, i0).reduce((s, l) => s + l.t, 0); const d = L.slice(i0, i1 + 1).reduce((s, l) => s + l.t, 0);
-  return { el, top: top0 - above, bot: top0 - above - d, d };
+  return { el, top: top0 - above, bot: top0 - above - d, d, ...sl };
 }
 
 const hiddenIn = (view: View, el: El) => !!(view.hiddenEls?.includes(el.id) || view.hiddenCats?.includes(el.cat));
@@ -88,7 +97,7 @@ export function slabsAt(doc: Doc, view: View, p: V2, ref: 'core' | 'all' = 'core
   const out: { h: SlabHit; score: number }[] = [];
   for (const cat of SLAB_CATS) for (const el of doc.all(cat)) {
     if (!el.loops?.length || !pointInPoly(p, el.loops)) continue;
-    const h = slabLevels(doc, el, ref);
+    const h = slabLevels(doc, el, ref, p);
     let score = view.kind === 'ceiling' ? (h.bot >= cutZ - 1 ? h.bot - cutZ : 1e7 + cutZ - h.bot) : Math.abs(h.top - E);
     if (!isStructural(el)) score += 1e8;
     if (hiddenIn(view, el)) score += 1e9;
@@ -101,7 +110,7 @@ export function slabsAt(doc: Doc, view: View, p: V2, ref: 'core' | 'all' = 'core
 export function spotSlab(doc: Doc, view: View, el: Spot): SlabHit | null {
   const st = spotStyle(doc, el);
   const r = el.refId ? doc.get(el.refId) : undefined;
-  if (r && SLAB_CATS.includes(r.cat)) return slabLevels(doc, r, st.slabRef);
+  if (r && SLAB_CATS.includes(r.cat)) return slabLevels(doc, r, st.slabRef, el.p);
   return isPlanLike(view) ? slabsAt(doc, view, el.p, st.slabRef)[0] ?? null : null;
 }
 

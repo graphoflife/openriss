@@ -1,10 +1,12 @@
 // Bewehrung – Ansichtsrahmen (Grundriss in Schnitthöhe / Schnittebene) und Host-Suche:
 // welches Betonbauteil liegt unter dem Cursor, mit Schnittpolygon und Tiefenausdehnung.
 import type { Doc, El, Id } from '../../../core/doc';
-import { V2, V3, add3, mul3, sub3, dot3, Poly, pointInPoly, polyArea, Mat2, apply, applyVec } from '../../../core/geom';
+import { V2, V3, add3, mul3, sub3, dot3, Poly, pointInPoly, polyArea, Mat2, apply, applyVec, union } from '../../../core/geom';
+import type { Face } from '../../../core/registry';
+import { surfaceOf } from '../../../views/surfaces';
 import { View, makeProjector, isPlanLike, isSectionLike } from '../../../core/view';
 import type { Detail } from '../../../core/view';
-import { cutPolysOfElement, solidsOf, Projector } from '../../../views/sectionEngine';
+import { cutPolysOfElement, solidsOf, Projector, faceNormal } from '../../../views/sectionEngine';
 import { planRange } from '../../../views/viewBuilder';
 import { HOST_CATS, isConcrete, solidBox } from '../common';
 
@@ -106,7 +108,42 @@ export function hostAt(doc: Doc, f: Frame, p: V2, only?: Id | null): HostHit | n
   return best;
 }
 
-/** Grundriss: liegendes Bauteil (Decke, Bodenplatte …) unterhalb der Schnittebene am Punkt p */
+const sloped = (doc: Doc, el: El): boolean => { const s = surfaceOf(doc, el); return !!s && !s.flat; };
+
+/** Geneigte Platte: Grundrissumriss (Vereinigung der Oberseiten) der Betonkörper je Material */
+function slopedPlan(doc: Doc, el: El): { mat?: Id; polys: Poly[]; faces: Face[] }[] {
+  const out: { mat?: Id; polys: Poly[]; faces: Face[] }[] = [];
+  for (const s of solidsOf(doc, el)) {
+    if (!isConcrete(doc, s.mat)) continue;
+    const tops = s.faces.filter((f) => faceNormal(f.pts).z > 1e-3);
+    const polys = union(tops.map((f) => [f.pts.map((q) => ({ x: q.x, y: q.y })), ...(f.holes ?? []).map((h) => h.map((q) => ({ x: q.x, y: q.y })))] as Poly));
+    out.push({ mat: s.mat, polys, faces: s.faces });
+  }
+  return out;
+}
+/** lotrechter Bereich der Flächen im Grundrisspunkt p (Ebenengleichung je nicht lotrechter Fläche) */
+function zRangeAt(faces: Face[], p: V2): [number, number] {
+  let lo = Infinity, hi = -Infinity;
+  for (const f of faces) {
+    const n = faceNormal(f.pts); if (Math.abs(n.z) < 1e-3) continue;
+    const ring = f.pts.map((q) => ({ x: q.x, y: q.y }));
+    if (!pointInPoly(p, [ring, ...(f.holes ?? []).map((h) => h.map((q) => ({ x: q.x, y: q.y })))])) continue;
+    const q = f.pts[0]; const z = q.z - (n.x * (p.x - q.x) + n.y * (p.y - q.y)) / n.z;
+    if (z < lo) lo = z; if (z > hi) hi = z;
+  }
+  return [lo, hi];
+}
+function slopedHit(doc: Doc, el: El, p: V2): HostHit | null {
+  for (const c of slopedPlan(doc, el)) {
+    const poly = c.polys.find((q) => pointInPoly(p, q)); if (!poly) continue;
+    const [zmin, zmax] = zRangeAt(c.faces, p); if (!(zmax > zmin)) continue;
+    const zm = (zmin + zmax) / 2;
+    return { host: el, ring: poly[0], poly, mat: c.mat, dmin: zm - zmax, dmax: zm - zmin, frame: planFrame(zm), zmin, zmax };
+  }
+  return null;
+}
+
+/** Grundriss: liegendes Bauteil (Decke, Bodenplatte …) unterhalb der Schnittebene am Punkt p (geneigt: Höhen am Punkt) */
 export function slabAt(doc: Doc, p: V2, cutZ: number, only?: Id | null): HostHit | null {
   let best: HostHit | null = null;
   for (const el of hostCandidates(doc)) {
@@ -115,6 +152,11 @@ export function slabAt(doc: Doc, p: V2, cutZ: number, only?: Id | null): HostHit
     const b = solidBox(doc, el); if (!b) continue;
     if (b.min.z > cutZ + 1) continue;
     if (p.x < b.min.x || p.x > b.max.x || p.y < b.min.y || p.y > b.max.y) continue;
+    if (sloped(doc, el)) {
+      const h = slopedHit(doc, el, p);
+      if (h && h.zmin <= cutZ + 1 && (!best || h.zmax > best.zmax)) best = h;
+      continue;
+    }
     if (best && b.max.z <= best.zmax) continue;
     const zm = (b.min.z + b.max.z) / 2;
     const f = planFrame(zm);
@@ -132,6 +174,7 @@ export function slabAt(doc: Doc, p: V2, cutZ: number, only?: Id | null): HostHit
 
 /** Plan-Umriss eines liegenden Bauteils (für Flächen-/Mattenbewehrung) */
 export function slabOutline(doc: Doc, el: El): Poly[] {
+  if (sloped(doc, el)) return slopedPlan(doc, el).flatMap((c) => c.polys);
   const b = solidBox(doc, el); if (!b) return [];
   const f = planFrame((b.min.z + b.max.z) / 2);
   const out: Poly[] = [];
