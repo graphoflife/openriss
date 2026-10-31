@@ -18,6 +18,9 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 - Von außerhalb des Repos: `node "<Pfad>/Revit Klon/bin/openriss.mjs" build …` oder `npm link` im Repo.
 - Gebäudeansichten, die noch an der Vorlagenposition liegen, werden am Ende automatisch um das Modell gelegt
   (`--fit-elevations` erzwingt das).
+- IFC-Teilmodell: `--ifc-disc struct` (Fachbereiche `arch`, `struct`, `mep`, `site`, kommagetrennt), `--ifc-cats wall,floor`,
+  `--ifc-exclude room,component`.
+- Weitere PDF-Schrift einbetten: `--font "Arial Narrow=ArialNarrow.ttf[,ArialNarrowBold.ttf]"`.
 
 ## Funktionen (`src/api.ts`)
 
@@ -26,7 +29,7 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `createProject(info?)` | neues Projekt aus der Vorlage (Ebenen EG/OG, Ansichten, Typen, Materialien) |
 | `loadProject(text \| objekt)`, `saveProject()` | `.oriss` laden/als Text liefern (auch `window.openriss.loadProject/saveProject`) |
 | `transaction(name, fn)` | mehrere Änderungen als ein Rückgängig-Schritt |
-| `add(el)` | beliebiges Element prüfen und hinzufügen (ID und Standardtyp werden ergänzt), wirft `ApiError` |
+| `add(el, { replace? })` | beliebiges Element prüfen und hinzufügen (ID und Standardtyp werden ergänzt), wirft `ApiError`. Gibt es die ID schon (z. B. Vorlagenmaterial `m_xps500`), werden Materialien/Typen **zusammengeführt** (Vorlagenwerte wie Druckkennwerte bleiben), andere Elemente ersetzt – jeweils mit Warnung in `warnings` und auf der Konsole; `replace: true` ersetzt vollständig |
 | `validate(els, doc)`, `importJson(daten, { replace?, dryRun? })` | Elementlisten prüfen/importieren |
 | `addLevel`, `addGrid`, `addWall`, `addDoor`, `addWindow`, `addWallOpening`, `addFloor`, `addRoof`, `addColumn`, `addBeam`, `addStair`, `addRoom`, `addRebar` | Erzeuger mit sinnvollen Vorgaben |
 | `syncStairBearings(id?)` | Treppenlager (`stairBearing`) nach Änderung der Lagerfelder einer bzw. aller Treppen nachführen |
@@ -35,7 +38,14 @@ npx openriss check elemente.json        # Elementliste prüfen (Fehler mit Eleme
 | `fitElevations()` | Gebäudeansichten an das Modell anpassen |
 | `applyLocale('CH', { retype?, elev00? })` | Landesvorlage Schweiz: Masstexte «1.82⁵», Koten «OK +2.75», Schweizer Plankopf, Dezimalpunkt, `elev00` = ±0.00 in m ü. M. |
 | `addRevision(sheetId, { text, by?, date?, index? })` | Revision im Plankopf (Index wird fortgezählt) |
-| `exportSvg(viewId)`, `exportDxf(viewId)`, `exportIfc()`, `exportPdf(ids?)` | Ausgabe |
+| `exportSvg(viewId)`, `exportDxf(viewId)`, `exportPdf(ids?)` | Ausgabe |
+| `exportIfc(name?, { disciplines?, cats?, excludeCats? })` bzw. `exportIfc({ … })` | IFC4, optional als Teilmodell (z. B. `{ disciplines: ['struct'] }`): Fachbereich je Kategorie; Wände und Decken gehören zum Tragwerk, wenn `structural` gesetzt ist oder der Kern aus Beton besteht; Türen/Fenster folgen ihrer Wand |
+| `addLineStyle({ name?, color, pen, dash? })` | Linienstil als Projekttyp anlegen bzw. vorhandenen gleichen liefern |
+| `registerPdfFont(familie, ttf, fettTtf?)` | weitere TrueType-Schrift im PDF einbetten (sonst Liberation Sans mit Breitenfaktor) |
+| `addFixture`, `addRunChain`, `addRiser`, `addCircuit`, `applySlope`, `tagRuns`, `createMepPlans`, `createRunSchedules`, `createSchemaView`, `addSchemaSym`, `addSchemaLine`, `autoHeatingSchema`, `applyPenetrations` | Gebäudetechnik (erstes Argument `doc`); öffnen selbst eine Transaktion, wenn keine offen ist |
+| `numberCircuits(doc, levelId?)`, `createHeatingTable(doc, verteilerId?)` | Heizkreise je Verteiler nummerieren, Heizkreistabelle je Verteiler |
+| `addEarthing(doc, plattenId, { edge?, mesh? })` | Fundamenterder als Ring (Randabstand `edge`, 300) mit Maschen ≤ `mesh` (20 m) |
+| `warnings` | Liste der Warnungen der API (z. B. zusammengeführte Vorlagen-IDs) |
 | `doc`, `app`, `sheets()` | Zugriff auf Dokument/Pläne (`doc.all('wall')`, `doc.get(id)`, `doc.update(id, patch)` in Transaktion) |
 
 Fehler bei `add`/`importJson` enthalten Element-ID, Kategorie, Feld und Meldung, z. B.
@@ -66,6 +76,17 @@ Wandtyp (`of:'wall'`): `layers: { mat, t, fn, core?, wrap? }[]` von außen nach 
 ### Öffnungen `door`, `window`, `opening`
 `hostId` (Wand), `t` (Mitte entlang der Basislinie ab `a`), `sill` (Brüstung/Schwelle über Wandbasis),
 `flipFacing`, `flipHand`. Tür-/Fenstertyp: `width`, `height`, `kind`, `frame`, `leafT` bzw. `frameDepth`, `sillDepth`, `sill`.
+Türarten `kind`: `single`, `double`, `sliding`, `opening` (Durchgang), `roll` (Rolltor: Wickelkasten gestrichelt, Lamellen
+in der Ansicht), `sectional` (Sektionaltor: Laufschienen und geöffnetes Torblatt gestrichelt, Paneele), `lift`
+(Teleskop-Lifttür). Vorlagentypen `dt_rolltor` (4500 × 2400), `dt_sektional`, `dt_lift`. Im IFC wird `OperationType`
+gesetzt (`SINGLE_SWING_LEFT/RIGHT`, `DOUBLE_DOOR_SINGLE_SWING`, `SLIDING_TO_LEFT/RIGHT`, `ROLLINGUP`, Sektionaltor
+`USERDEFINED` «SECTIONAL»).
+
+### Lift `elevator`
+`p` (Kabinenmitte), `rot` (Tür auf der lokalen −y-Seite), `levelId` (unterste) und `topLevelId` (oberste Haltestelle),
+`cabW`, `cabD`, `cabH` (1100 × 1400 × 2200), `doorW` (900), `cw` (Gegengewicht `left`, `right`, `back`, `none`), `load` (kg),
+`persons`, `label` (leer = «Lift 630 kg / 8 P.»). Grundriss auf allen Haltestellen, 3D-Kabine, Liste, IFC
+`IfcTransportElement .ELEVATOR.` mit `Pset_TransportElementCommon`/`…Elevator` und `CH_Lift`.
 Wandöffnung `opening`: `width`, `height`, `sill` (rechteckig) – runde Kernbohrungen siehe Modul „Einlagen“.
 
 ### Geschossdecke `floor`, Decke `ceiling`, Dach `roof`
@@ -126,6 +147,39 @@ Fläche und Umriss werden aus raumbegrenzenden Wänden und Raumtrennungen (`room
 | `coverUsed` | verwendete Betondeckung |
 
 Beschriftung `rebarTag`: `viewId`, `refId` (Bewehrung), `off`, `fmt`, `leader` – am einfachsten mit `addRebarTag`.
+
+### Linien, Linienstile, Texte, Symbole
+- Detail-/Modelllinie `line`: `a`, `b`, `arc?`, `style`; Bereich `region`: `loops`, `typeId`, `lineStyle`.
+- `style`/`lineStyle` ist ein eingebauter Schlüssel (`thin`, `medium`, `wide`, `extrawide`, `hidden`, `dash`, `center`, `dot`,
+  `overhead`, `red`, `blue`, `green`, `invisible`) oder die ID eines **Linienstil-Typs**
+  `{ cat:'type', of:'lineStyle', name, color, pen (1–16), dash ('solid'|'dash'|'hidden'|'dot'|'center'|'dashdot'|'longdash') }`.
+  Die Vorlage legt die eingebauten Stile als `ls_<Schlüssel>` an (ein geänderter Typ wirkt auf alle Linien mit dem Schlüssel)
+  sowie Fachstile `ls_e_haar`, `ls_e_fein`, `ls_e_duenn`, `ls_e_mittel`, `ls_e_strich` (Elektro, magenta), `ls_sw_duenn`,
+  `ls_sw_mittel`, `ls_sw_breit`, `ls_sw_strich` (Abwasser, braun), `ls_kt_duenn`, `ls_kt_mittel`, `ls_kt_strich` (Kältemittel).
+  Dialog *Verwalten → Linienstile*. DXF: je Linienstil ein Layer «Linien-<Name>» mit Layerfarbe (ACI und True Color),
+  Linientyp und Linienstärke; die Elemente stehen auf VONLAYER.
+- Texttypen (auch Bemaßungs-, Koten- und Beschriftungstypen): `widthFactor` (Breitenfaktor, z. B. 0.8); Schriften mit
+  «Narrow» im Namen erhalten automatisch 0.82. Wirkt auf Bildschirm, SVG, PDF (horizontale Skalierung bzw. eigene
+  Schrift über `registerPdfFont`) und DXF (TEXT Gruppe 41, MTEXT `\W`).
+- Symbol `symbol` mit `kind: 'scalebar'` (Massstabsleiste): `p` (linkes Ende), `rot`, `length` (Modell-mm; leer = automatisch
+  ≈ 50 mm Papier, gerundet auf 1-2-5), `div` (Felder), `sub` (Unterteilung erstes Feld, 2), `height` (Papier-mm), `unit`
+  (`m`/`cm`), `showScale` («M 1:100»). In einer Ansicht platziert, stimmt sie auch im Ansichtsfenster auf dem Plan.
+
+### Gebäudetechnik: Beschriftung, Heizkreise, Fundamenterder
+- Beschriftungsformate mit Platzhaltern: je Element `tagFmt`, je Projekt `project.tagFormats[cat]`. Abschnitte zwischen
+  « · », « / », «, » entfallen, wenn ihre Platzhalter leer sind.
+  Leitungen (`pipe`, `duct`, `conduit`): `{sys} {system} {size} {slope} {len} {type} {werkstoff} {offset}`, Vorgabe
+  `{sys} {size} {slope}` (z. B. «SW DN 110 2 %»). Heizkreis `fbh`: `{name} {room} {va} {len} {area} {power} {flow} {manifold}`,
+  Vorgabe `{name} · VA {va} cm · {len} m · {power} W`.
+- Heizkreis `fbh`: zusätzlich `dT` (Spreizung K, 5) → Volumenstrom l/h; Listenfelder `flow`, `manifoldId`.
+- Fundamenterder `earthing`: `levelId`, `hostId` (Fundamentplatte; Lage = Unterseite + `cover` 50 mm), sonst `offset`
+  über Ebene, `paths: V2[][]` (Ringe mit Anfangs- = Endpunkt), `werkstoff` (V4A), `dia` (10), `lugs: { p, label?, h? }[]`
+  (Anschlussfahnen). IFC `IfcCableSegment .CONDUCTORSEGMENT.` (Fachbereich `mep`).
+
+### Arbeitsfugen im IFC
+`joint` wird als `IfcBuildingElementProxy` (USERDEFINED) mit einer 20 mm dünnen Scheibe in der Fugenebene exportiert,
+Pset `CH_Arbeitsfuge` (Art, Lage, Koordinaten, Bauteil, Länge, Fläche, Etappe A/B, Fugenblech, Produkt, ID) und
+`IfcRelConnectsElements` zum Fugenblech.
 
 ### Ansicht `view`
 `kind`: `plan`, `ceiling`, `elevation`, `section`, `drafting`, `legend`, `3d`, `sheet`, `schedule`.

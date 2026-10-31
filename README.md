@@ -15,8 +15,9 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 **Modellieren (Architektur)**
 - Wände mit Schichtaufbau (Struktur bearbeiten), Basislinie, Abhängigkeiten oben/unten, automatische
   Eck-, T- und Kreuzverbindungen, saubere Schraffur je Material, Leertaste kehrt die Außenseite um
-- Türen und Fenster (Rohbaumaße, ein-/zweiflügelig, Schiebetür, Dreh-Kipp-Symbol in Ansichten),
-  automatische Kennzeichen, Anschlag/Aufschlag umkehren
+- Türen und Fenster (Rohbaumaße, ein-/zweiflügelig, Schiebetür, Rolltor, Sektionaltor, Teleskop-Lifttür,
+  Dreh-Kipp-Symbol in Ansichten), automatische Kennzeichen, Anschlag/Aufschlag umkehren
+- Liftkabine im Schacht (Kabine, Tür, Gegengewicht auf allen Haltestellen, IfcTransportElement)
 - Geschossdecken, Decken, Dächer (Walm-, Sattel-, Pult- und Flachdach, Wände oben fixieren),
   Treppen, Geländer, Bauteile (Möbel, Sanitär, Küche), Räume mit Fläche und Raumstempel,
   Raumtrennung, Wand- und Schachtöffnungen
@@ -42,6 +43,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 **Gebäudetechnik (HLKSE)**
 - Heizung, Lüftung, Sanitär, Elektro: Rohre, Kanäle, Leerrohre mit Systemen und Gefälle, Apparate und
   Symbole, Fussbodenheizungskreise, Prinzipschema, Durchbrüche automatisch an das Tragwerk
+- Beschriftungsformate (DN, Gefälle, System), Heizkreise mit Nummer, Länge, Leistung und Volumenstrom,
+  Heizkreistabelle je Verteiler, Fundamenterder (Ring und Maschen entlang der Bodenplatte, Anschlussfahnen)
 
 **Beschriften**
 - Ausgerichtete Bemaßung (Maßketten, ganze Wände mit Öffnungen, assoziativ), lineare, Winkel- und
@@ -49,7 +52,9 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - Text, Beschriftung nach Kategorie, Alle beschriften, Raumstempel
 - Landesvorlage Schweiz: Masstexte «1.82⁵», Koten «OK +2.75» (Rohbau/Fertig, m ü. M.), Koten-Kästchen,
   Schweizer Plankopf mit Revisionstabelle
-- Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Nordpfeil
+- Füllbereiche, Dämmung, Detailbauteile, Revisionswolken, Nordpfeil, grafische Massstabsleiste
+- Linienstile als Projekttypen (Farbe, Stiftbreite, Strichart frei kombinierbar, Fachstile für Elektro, Abwasser,
+  Kältemittel), Breitenfaktor für Schmalschriften
 
 **Ansichten und Ausgabe**
 - Grundrisse, Deckenpläne, Gebäudeansichten, Schnitte, Detailausschnitte, Zeichnungsansichten,
@@ -60,7 +65,8 @@ Tür, `DI` bemaßt, `MV` verschiebt.
 - 3D-Ansicht mit ViewCube, Orbit (Umschalt + mittlere Maustaste), visuellen Stilen und Schnittbereich
 - Pläne mit Plankopf (A0–A4), Ansichten per Drag & Drop platzieren, Bauteillisten
 - Drucken, Vektor-PDF ohne Druckdialog (einzelner Plan oder „Alle Pläne als PDF“, Maßstab exakt, Schrift
-  eingebettet), SVG, PNG, DXF (Export und Import), IFC4-Export, glTF/OBJ, Rasterbilder als Unterlage
+  eingebettet, weitere TTF einbettbar), SVG, PNG, DXF (Export und Import, Layer je Linienstil mit Farbe), IFC4-Export
+  (auch als Teilmodell je Fachbereich, z. B. nur Tragwerk), glTF/OBJ, Rasterbilder als Unterlage
 - Beispielprojekt (Einfamilienhaus mit Plänen, Schnitten, Bewehrung und Türliste) unter
   *Einfügen → Beispielprojekt*
 
