@@ -137,8 +137,18 @@ function drawTopoSection(ctx: SectionCtx, el: El): void {
     const quads = f.map((s, i) => [[V({ x: s.u0, y: s.z0 }), V({ x: s.u1, y: s.z1 }), V({ x: t[i].u1, y: t[i].z1 }), V({ x: t[i].u0, y: t[i].z0 })]]).filter((q) => Math.abs(sArea(q[0])) > 1);
     if (quads.length) {
       const pr: Projector = { origin: ctx.origin, dir: ctx.dir, toView: ctx.toView, depth: ctx.depth };
-      // Bauwerk samt Innenräumen aussparen (umschlossene Löcher der Schnittfläche füllen)
-      const cuts = buildingEls(doc).flatMap((e) => cutPolysOfElement(doc, e, pr).flatMap((c) => c.polys));
+      // Bauwerk samt Innenräumen aussparen (umschlossene Löcher der Schnittfläche füllen); über geschnittenen Platten
+      // (Bodenplatte, Decken, Rampe) ist ebenfalls keine Hinterfüllung – auch bei offenen Trögen
+      const els = buildingEls(doc);
+      const cuts = els.flatMap((e) => cutPolysOfElement(doc, e, pr).flatMap((c) => c.polys));
+      for (const e of els) {
+        if (e.cat !== 'floor' && e.cat !== 'foundationSlab') continue;
+        for (const c of cutPolysOfElement(doc, e, pr)) for (const p of c.polys) {
+          let u0 = Infinity, u1 = -Infinity, z0 = Infinity;
+          for (const q of p[0]) { if (q.x < u0) u0 = q.x; if (q.x > u1) u1 = q.x; if (q.y < z0) z0 = q.y; }
+          if (u1 - u0 > 1) cuts.push([[{ x: u0, y: z0 }, { x: u1, y: z0 }, { x: u1, y: z0 + 1e6 }, { x: u0, y: z0 + 1e6 }]]);
+        }
+      }
       const solid = cuts.length ? union(union(cuts).map((p) => [p[0]])) : [];
       const reg = solid.length ? difference(union(quads), solid) : union(quads);
       const m = materialOf(doc, 'm_hinterfuellung'); const fill = cutFill(m?.cutPattern ?? 'gravel', m?.cutColor, ctx.detail);

@@ -215,9 +215,14 @@ function buildSection(doc: Doc, view: View, dl: DisplayList, o: BuildOpts): void
   drawSolids(doc, solidEls, pr, dl, { cut: true, far: ctx.far, detail: view.detail, crop, style: view.style === 'shaded' ? 'shaded' : 'hidden' });
   ctx.modelBox = crop ?? dl.bbox();
   if (crop) dl.clip(null);
+  // Bauteil-Darstellungen (Fugen, Lager, Einlagen …) auf den Zuschnitt beschneiden; Bezugselemente (Ebenen, Raster)
+  // reichen mit ihren Köpfen darüber hinaus
   for (const el of sortByOrder(custom)) {
+    const clip = !!crop && !catDef(el.cat)?.datum && el.cat !== 'view';
+    if (clip) { dl.begin(null); dl.clip([boxCorners(crop!)]); }
     dl.begin(el.id);
     try { catDef(el.cat)!.drawSection!(ctx, el); } catch (e) { console.warn('Schnitt-Zeichenfehler', el.cat, e); }
+    if (clip) { dl.begin(null); dl.clip(null); }
   }
   dl.begin(null);
   if (!o.noAnnotations) drawAnnos(doc, view, dl, annos);

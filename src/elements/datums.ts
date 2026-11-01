@@ -26,6 +26,9 @@ registerCategory({
     const [x0, x1] = l.ext ?? levelExtents(ctx);
     levelHeadX.set(ctx.view.id + '|' + l.id, x1);
     const y = l.elev - ctx.origin.z;
+    // ausserhalb des Zuschneidebereichs (Höhe) nicht zeichnen
+    const cb = cropBox(ctx.view);
+    if (cb && (y < cb.min.y - 1 || y > cb.max.y + 1)) return;
     const pen: Pen = { ...catPen(ctx.doc, 'level', false), dash: 'center' };
     dl.line({ x: x0, y }, { x: x1, y }, pen, { sub: 'line' });
     // Kopf rechts: Höhenkote ▽ mit Text
@@ -98,8 +101,11 @@ registerCategory({
     const ls = levels(ctx.doc);
     const y0 = (ls[0]?.elev ?? 0) - 1500, y1 = (ls[ls.length - 1]?.elev ?? 3000) + 2500;
     const b = ctx.modelBox;
-    const top = Math.max(y1, b && isFinite(b.max.y) ? b.max.y + 1000 : y1);
-    ctx.dl.line({ x: vx, y: Math.min(y0, b && isFinite(b.min.y) ? b.min.y - 500 : y0) }, { x: vx, y: top }, { ...catPen(ctx.doc, 'grid', false), dash: 'center' }, { sub: 'line' });
+    // Länge: alle Ebenen bzw. Modell, im zugeschnittenen Schnitt höchstens bis zum Zuschnitt
+    let top = Math.max(y1, b && isFinite(b.max.y) ? b.max.y + 1000 : y1);
+    let bot = Math.min(y0, b && isFinite(b.min.y) ? b.min.y - 500 : y0);
+    if (cb && cb.max.y > cb.min.y) { top = Math.min(top, cb.max.y + 2 * s); bot = Math.max(bot, cb.min.y); }
+    ctx.dl.line({ x: vx, y: bot }, { x: vx, y: top }, { ...catPen(ctx.doc, 'grid', false), dash: 'center' }, { sub: 'line' });
     bubble(ctx.dl, { x: vx, y: top + 4 * s }, g.name, s);
   },
   grips: (el, doc, view) => (isPlanLike(view) ? [{ id: 'a', p: (el as Grid).a, kind: 'end' }, { id: 'b', p: (el as Grid).b, kind: 'end' }] : []),
